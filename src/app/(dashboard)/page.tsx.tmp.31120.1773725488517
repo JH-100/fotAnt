@@ -1,0 +1,44 @@
+'use client'
+
+// 대시보드 메인 페이지 — 2026 앰비언트 UI
+import ExchangeRateCard from '@/components/dashboard/ExchangeRateCard'
+import StockTable from '@/components/dashboard/StockTable'
+import RankingTable from '@/components/dashboard/RankingTable'
+import RecommendationPanel from '@/components/dashboard/RecommendationPanel'
+
+const DashboardPage = () => {
+  return (
+    <div className="mx-auto max-w-7xl space-y-10 px-4 py-8 sm:px-6 lg:px-8">
+      {/* 헤더 */}
+      <header className="space-y-2">
+        <h1 className="bg-gradient-to-r from-blue-400 via-violet-400 to-emerald-400 bg-clip-text text-4xl font-bold tracking-tight text-transparent">
+          주식자동화
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          실시간 환율 · 국내주식 · 토스증권 랭킹 모니터링
+        </p>
+      </header>
+
+      {/* 환율 섹션 */}
+      <section className="space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="h-5 w-1 rounded-full bg-gradient-to-b from-blue-400 to-violet-500" />
+          <h2 className="text-lg font-semibold">환율</h2>
+        </div>
+        <ExchangeRateCard />
+      </section>
+
+      {/* 국내 주식 + 랭킹 그리드 */}
+      <div className="grid gap-6 xl:grid-cols-2">
+        <section>
+          <StockTable />
+        </section>
+        <section>
+          <RankingTable />
+        </section>
+      </div>
+    </div>
+  )
+}
+
+export default DashboardPage

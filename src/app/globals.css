@@ -1,0 +1,171 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* 2026 다크 글래스모피즘 — 앰비언트 UI 테마 */
+:root {
+  --background: oklch(0.12 0.02 270);
+  --foreground: oklch(0.95 0.01 260);
+  --card: oklch(0.17 0.015 270 / 50%);
+  --card-foreground: oklch(0.95 0.01 260);
+  --popover: oklch(0.17 0.02 270 / 85%);
+  --popover-foreground: oklch(0.95 0 0);
+  --primary: oklch(0.72 0.16 250);
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.22 0.025 270);
+  --secondary-foreground: oklch(0.88 0.01 260);
+  --muted: oklch(0.20 0.015 270);
+  --muted-foreground: oklch(0.60 0.03 260);
+  --accent: oklch(0.28 0.05 280);
+  --accent-foreground: oklch(0.95 0 0);
+  --destructive: oklch(0.65 0.22 25);
+  --border: oklch(1 0 0 / 7%);
+  --input: oklch(1 0 0 / 10%);
+  --ring: oklch(0.72 0.16 250);
+  --chart-1: oklch(0.72 0.16 250);
+  --chart-2: oklch(0.70 0.19 160);
+  --chart-3: oklch(0.68 0.16 300);
+  --chart-4: oklch(0.65 0.14 200);
+  --chart-5: oklch(0.60 0.20 25);
+  --radius: 0.75rem;
+  --sidebar: oklch(0.14 0.02 270);
+  --sidebar-foreground: oklch(0.90 0 0);
+  --sidebar-primary: oklch(0.72 0.16 250);
+  --sidebar-primary-foreground: oklch(0.95 0 0);
+  --sidebar-accent: oklch(0.22 0.03 270);
+  --sidebar-accent-foreground: oklch(0.90 0 0);
+  --sidebar-border: oklch(1 0 0 / 7%);
+  --sidebar-ring: oklch(0.72 0.16 250);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* 앰비언트 배경 오브 */
+.ambient-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(120px);
+  opacity: 0.35;
+  pointer-events: none;
+  animation: orb-float 25s ease-in-out infinite;
+}
+
+.ambient-orb-1 {
+  width: 600px;
+  height: 600px;
+  background: oklch(0.40 0.20 280);
+  top: -200px;
+  left: -100px;
+}
+
+.ambient-orb-2 {
+  width: 500px;
+  height: 500px;
+  background: oklch(0.35 0.18 200);
+  top: 35%;
+  right: -150px;
+  animation-delay: -8s;
+}
+
+.ambient-orb-3 {
+  width: 450px;
+  height: 450px;
+  background: oklch(0.33 0.22 160);
+  bottom: -100px;
+  left: 25%;
+  animation-delay: -16s;
+}
+
+@keyframes orb-float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(40px, -25px) scale(1.06); }
+  66% { transform: translate(-25px, 20px) scale(0.94); }
+}
+
+/* 글래스 카드 */
+.glass {
+  background: oklch(1 0 0 / 4%);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid oklch(1 0 0 / 7%);
+  box-shadow:
+    0 4px 32px oklch(0 0 0 / 25%),
+    inset 0 1px 0 oklch(1 0 0 / 5%);
+  transition: all 0.3s ease;
+}
+
+.glass:hover {
+  background: oklch(1 0 0 / 6%);
+  border-color: oklch(1 0 0 / 12%);
+  box-shadow:
+    0 8px 48px oklch(0 0 0 / 35%),
+    inset 0 1px 0 oklch(1 0 0 / 8%);
+}
+
+/* 상승/하락 글로우 */
+.glow-up { box-shadow: 0 0 24px oklch(0.70 0.19 160 / 20%); }
+.glow-down { box-shadow: 0 0 24px oklch(0.65 0.22 25 / 20%); }
+
+/* 커스텀 스크롤바 */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: oklch(1 0 0 / 12%);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: oklch(1 0 0 / 22%); }
