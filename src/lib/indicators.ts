@@ -258,6 +258,147 @@ export const calcBuySellPressure = (bars: MinutePrice[], lookback: number = 15):
 }
 
 // ════════════════════════════════════════════════════
+// 고급 지표 (Williams %R, Keltner Channel, Squeeze, Volume Profile)
+// ════════════════════════════════════════════════════
+
+/** Williams %R — RSI보다 반응이 빠른 과매수/과매도 오실레이터 (-100 ~ 0) */
+export const calcWilliamsR = (bars: MinutePrice[], period: number = 14): number => {
+  if (bars.length < period) return -50
+  const sorted = [...bars].sort((a, b) => a.time.localeCompare(b.time))
+  const recent = sorted.slice(-period)
+  const highestHigh = Math.max(...recent.map(b => b.high))
+  const lowestLow = Math.min(...recent.map(b => b.low))
+  const currentClose = sorted[sorted.length - 1]!.close
+  if (highestHigh === lowestLow) return -50
+  return ((highestHigh - currentClose) / (highestHigh - lowestLow)) * -100
+}
+
+/** Keltner Channel — EMA ± ATR 배수 (볼린저밴드와 조합하여 Squeeze 감지) */
+export const calcKeltnerChannel = (bars: MinutePrice[], emaPeriod: number = 20, atrMult: number = 2): {
+  upper: number; middle: number; lower: number
+} => {
+  if (bars.length < emaPeriod + 1) return { upper: 0, middle: 0, lower: 0 }
+  const sorted = [...bars].sort((a, b) => a.time.localeCompare(b.time))
+  const closes = sorted.map(b => b.close)
+  const ema = calcEMA(closes, emaPeriod)
+  const middle = ema[ema.length - 1] ?? 0
+  const atr = calcMinuteATR(sorted, emaPeriod)
+  return {
+    upper: middle + atrMult * atr,
+    middle,
+    lower: middle - atrMult * atr,
+  }
+}
+
+/** Volatility Squeeze 감지 — BB가 KC 안에 들어가면 변동성 압축 → 폭발 직전 */
+export const detectSqueeze = (bars: MinutePrice[], bbPeriod: number = 10, bbMult: number = 1.5, kcPeriod: number = 20, kcMult: number = 2): {
+  isSqueeze: boolean    // 현재 스퀴즈 상태인가
+  squeezeReleased: boolean // 스퀴즈 직후 해소된 상태인가 (돌파 신호)
+  direction: 'up' | 'down' | 'neutral' // 해소 방향
+} => {
+  if (bars.length < kcPeriod + 5) return { isSqueeze: false, squeezeReleased: false, direction: 'neutral' }
+  const sorted = [...bars].sort((a, b) => a.time.localeCompare(b.time))
+  const closes = sorted.map(b => b.close)
+
+  // 현재 BB & KC
+  const bb = calcBollingerBands(closes, bbPeriod, bbMult)
+  const bbUpper = bb.upper[bb.upper.length - 1] ?? 0
+  const bbLower = bb.lower[bb.lower.length - 1] ?? 0
+  const kc = calcKeltnerChannel(sorted, kcPeriod, kcMult)
+
+  const isSqueeze = bbUpper < kc.upper && bbLower > kc.lower
+
+  // 이전 봉의 BB & KC (스퀴즈 해소 감지)
+  const prevBars = sorted.slice(0, -1)
+  const prevCloses = prevBars.map(b => b.close)
+  const prevBB = calcBollingerBands(prevCloses, bbPeriod, bbMult)
+  const prevBBUpper = prevBB.upper[prevBB.upper.length - 1] ?? 0
+  const prevBBLower = prevBB.lower[prevBB.lower.length - 1] ?? 0
+  const prevKC = calcKeltnerChannel(prevBars, kcPeriod, kcMult)
+  const wasSqueeze = prevBBUpper < prevKC.upper && prevBBLower > prevKC.lower
+
+  const squeezeReleased = wasSqueeze && !isSqueeze
+  const currentClose = closes[closes.length - 1] ?? 0
+  const prevClose = closes[closes.length - 2] ?? 0
+  const direction = squeezeReleased
+    ? (currentClose > prevClose ? 'up' : currentClose < prevClose ? 'down' : 'neutral')
+    : 'neutral'
+
+  return { isSqueeze, squeezeReleased, direction }
+}
+
+/** Volume Profile — 가격대별 거래량 분포 (POC, VAH, VAL) */
+export const calcVolumeProfile = (bars: MinutePrice[], bins: number = 20): {
+  poc: number       // Point of Control: 최다 거래 가격대
+  vah: number       // Value Area High (거래량 70% 구간 상단)
+  val: number       // Value Area Low (거래량 70% 구간 하단)
+  position: number  // 현재가의 VA 대비 위치 (-1: 저평가, 0: 적정, +1: 고평가)
+} => {
+  if (bars.length < 10) return { poc: 0, vah: 0, val: 0, position: 0 }
+  const sorted = [...bars].sort((a, b) => a.time.localeCompare(b.time))
+  const currentPrice = sorted[sorted.length - 1]!.close
+
+  const allPrices = sorted.flatMap(b => [b.high, b.low, b.close])
+  const minP = Math.min(...allPrices)
+  const maxP = Math.max(...allPrices)
+  if (maxP === minP) return { poc: currentPrice, vah: currentPrice, val: currentPrice, position: 0 }
+
+  const binSize = (maxP - minP) / bins
+  const volumeByBin: number[] = new Array(bins).fill(0)
+
+  for (const bar of sorted) {
+    const typicalPrice = (bar.high + bar.low + bar.close) / 3
+    const binIdx = Math.min(Math.floor((typicalPrice - minP) / binSize), bins - 1)
+    volumeByBin[binIdx] += bar.volume
+  }
+
+  // POC: 최대 거래량 bin
+  let maxVol = 0, pocIdx = 0
+  for (let i = 0; i < bins; i++) {
+    if (volumeByBin[i]! > maxVol) { maxVol = volumeByBin[i]!; pocIdx = i }
+  }
+  const poc = minP + (pocIdx + 0.5) * binSize
+
+  // Value Area: POC에서 양쪽으로 확장하여 전체 거래량 70% 구간
+  const totalVol = volumeByBin.reduce((a, b) => a + b, 0)
+  const targetVol = totalVol * 0.70
+  let vaLow = pocIdx, vaHigh = pocIdx
+  let vaVol = volumeByBin[pocIdx]!
+
+  while (vaVol < targetVol && (vaLow > 0 || vaHigh < bins - 1)) {
+    const leftVol = vaLow > 0 ? volumeByBin[vaLow - 1]! : 0
+    const rightVol = vaHigh < bins - 1 ? volumeByBin[vaHigh + 1]! : 0
+    if (leftVol >= rightVol && vaLow > 0) { vaLow--; vaVol += leftVol }
+    else if (vaHigh < bins - 1) { vaHigh++; vaVol += rightVol }
+    else { vaLow--; vaVol += leftVol }
+  }
+
+  const val = minP + vaLow * binSize
+  const vah = minP + (vaHigh + 1) * binSize
+  const position = vah !== val
+    ? currentPrice < val ? -1 : currentPrice > vah ? 1 : ((currentPrice - val) / (vah - val)) * 2 - 1
+    : 0
+
+  return { poc, vah, val, position }
+}
+
+/** KRX 호가 단위 계산 — 가격대별 최소 호가 단위 */
+export const getTickSize = (price: number): number => {
+  if (price < 2000) return 1
+  if (price < 5000) return 5
+  if (price < 20000) return 10
+  if (price < 50000) return 50
+  if (price < 200000) return 100
+  if (price < 500000) return 500
+  return 1000
+}
+
+/** 스프레드 비용 비율 — 호가 단위 / 가격 × 100 (%) */
+export const calcSpreadCost = (price: number): number => {
+  return (getTickSize(price) / price) * 100
+}
+
+// ════════════════════════════════════════════════════
 // 레거시 신호 분석 함수 (추천 엔진에서 사용)
 // ════════════════════════════════════════════════════
 

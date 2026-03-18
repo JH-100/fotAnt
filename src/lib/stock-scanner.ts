@@ -6,6 +6,8 @@ import {
   calcVWAP, calcVolumeSurge, calcShortMomentum,
   detectPullback, calcMinuteATR, calcBuySellPressure,
   calcSMA, calcATR,
+  calcWilliamsR, calcKeltnerChannel, detectSqueeze,
+  calcVolumeProfile, calcSpreadCost,
   getRSISignal, getMACDSignal, getMASignal, getVolumeSignal,
 } from './indicators'
 import type { MinutePrice, DailyPrice } from '@/types/kis'
@@ -47,6 +49,11 @@ export interface ScanResult {
   momentum: number         // 단기 모멘텀 %
   atr: number              // ATR (원)
   atrPercent: number       // ATR% (가격 대비)
+  williamsR: number        // Williams %R (-100 ~ 0)
+  squeeze: boolean         // Volatility Squeeze 상태
+  squeezeRelease: 'up' | 'down' | 'neutral' // 스퀴즈 해소 방향
+  vpPosition: number       // Volume Profile 위치 (-1: 저평가, +1: 고평가)
+  spreadCost: number       // 호가 스프레드 비용 (%)
   takeProfitPercent: number
   stopLossPercent: number
   score: number            // 종합 점수 (-100 ~ +100)
@@ -78,7 +85,7 @@ const analyzeWithMinuteBars = async (
   const sorted5 = [...bars5].sort((a, b) => a.time.localeCompare(b.time))
   const closes5 = sorted5.map(b => b.close)
 
-  // 단기 지표
+  // ─── 기본 지표 ───
   const rsiArr = calcRSI(closes5, 7)
   const rsi = rsiArr[rsiArr.length - 1] ?? 50
 
@@ -107,8 +114,22 @@ const analyzeWithMinuteBars = async (
   const prev3 = sma3[sma3.length - 2] ?? 0
   const prev7 = sma7[sma7.length - 2] ?? 0
 
+  // ─── 고급 지표 (신규) ───
+  const williamsR = calcWilliamsR(sorted5, 14)
+  const squeeze = detectSqueeze(sorted5, 10, 1.5, 20, 2)
+  const vp = calcVolumeProfile(sorted1, 20)
+  const spreadCost = calcSpreadCost(price)
+
   let score = 0
   const reasons: string[] = []
+
+  // ★ 저가주 필터: 스프레드 비용이 0.5% 이상이면 스캘핑 비효율 → 감점
+  if (spreadCost >= 0.5) {
+    score -= 15
+    reasons.push(`스프레드 ${spreadCost.toFixed(2)}% 과다`)
+  } else if (spreadCost >= 0.3) {
+    score -= 5
+  }
 
   // RSI(7)
   if (rsi < 25) { score += 30; reasons.push(`RSI(7) ${rsi.toFixed(0)} 극과매도`) }
@@ -116,6 +137,12 @@ const analyzeWithMinuteBars = async (
   else if (rsi < 45) { score += 8 }
   else if (rsi > 80) { score -= 25; reasons.push(`RSI(7) ${rsi.toFixed(0)} 극과매수`) }
   else if (rsi > 70) { score -= 15; reasons.push(`RSI(7) ${rsi.toFixed(0)} 과매수`) }
+
+  // ★ Williams %R — RSI와 상호보완 (더 빠른 반응)
+  if (williamsR < -85 && rsi < 40) { score += 12; reasons.push(`W%R ${williamsR.toFixed(0)} 극과매도`) }
+  else if (williamsR < -80) { score += 6 }
+  else if (williamsR > -15 && rsi > 65) { score -= 10; reasons.push(`W%R ${williamsR.toFixed(0)} 극과매수`) }
+  else if (williamsR > -20) { score -= 5 }
 
   // 거래량 급등
   if (volumeSurge >= 4 && buySellRatio > 1.2) { score += 30; reasons.push(`거래량 ${volumeSurge.toFixed(1)}배 폭증+매수세`) }
@@ -143,6 +170,23 @@ const analyzeWithMinuteBars = async (
   else if (bbPosition < 0.25) { score += 8 }
   else if (bbPosition > 0.95) { score -= 12; reasons.push('BB 상단 돌파') }
 
+  // ★ Volatility Squeeze — BB가 Keltner 안으로 수렴 후 방향 돌파
+  if (squeeze.squeezeReleased && squeeze.direction === 'up') {
+    score += 18; reasons.push('스퀴즈 상방돌파')
+  } else if (squeeze.squeezeReleased && squeeze.direction === 'down') {
+    score -= 15; reasons.push('스퀴즈 하방돌파')
+  } else if (squeeze.isSqueeze) {
+    // 스퀴즈 중: 방향 결정 전 → 대기 신호
+    score += 3; reasons.push('변동성 압축(스퀴즈)')
+  }
+
+  // ★ Volume Profile — 가격대별 거래량 분포
+  if (vp.position < -0.5 && momentum > 0) {
+    score += 10; reasons.push('VP 저평가구간 반등')
+  } else if (vp.position > 0.7 && volumeSurge < 1.5) {
+    score -= 8; reasons.push('VP 고평가구간')
+  }
+
   // 체결강도
   if (buySellRatio > 2) { score += 10; reasons.push(`체결강도 ${buySellRatio.toFixed(1)}`) }
   else if (buySellRatio > 1.5) { score += 5 }
@@ -152,9 +196,11 @@ const analyzeWithMinuteBars = async (
   if (prev3 <= prev7 && latest3 > latest7) { score += 12; reasons.push('단기이평 골든(3/7)') }
   else if (prev3 >= prev7 && latest3 < latest7) { score -= 10; reasons.push('단기이평 데드(3/7)') }
 
-  // 익절/손절
+  // 익절/손절 — 스프레드 비용 반영
   let takeProfitPercent = Math.max(0.5, Math.min(4, atrPercent * 3))
   let stopLossPercent = Math.max(0.3, Math.min(2.5, atrPercent * 2))
+  // 스프레드 비용만큼 최소 익절목표를 높임
+  takeProfitPercent = Math.max(takeProfitPercent, spreadCost * 3)
   if (score >= 50) { takeProfitPercent *= 1.3 }
   else if (score < 30) { takeProfitPercent *= 0.7; stopLossPercent *= 0.8 }
   if (volumeSurge > 3) { takeProfitPercent *= 1.2 }
@@ -170,7 +216,11 @@ const analyzeWithMinuteBars = async (
     volume: sorted1[sorted1.length - 1]?.cumVolume ?? 0,
     volumeSurge, rsi, macdHist, macdPrevHist, bbPosition,
     vwap, vwapDiff, buySellRatio, momentum,
-    atr, atrPercent, takeProfitPercent, stopLossPercent,
+    atr, atrPercent,
+    williamsR, squeeze: squeeze.isSqueeze,
+    squeezeRelease: squeeze.squeezeReleased ? squeeze.direction : 'neutral',
+    vpPosition: vp.position, spreadCost,
+    takeProfitPercent, stopLossPercent,
     score, signal, reasons, source: 'minute',
   }
 }
@@ -276,7 +326,10 @@ const analyzeWithDailyBars = async (
     volume: latestVol, volumeSurge,
     rsi, macdHist, macdPrevHist, bbPosition,
     vwap: 0, vwapDiff: 0, buySellRatio: 1, momentum,
-    atr, atrPercent, takeProfitPercent, stopLossPercent,
+    atr, atrPercent,
+    williamsR: -50, squeeze: false, squeezeRelease: 'neutral' as const,
+    vpPosition: 0, spreadCost: calcSpreadCost(price),
+    takeProfitPercent, stopLossPercent,
     score, signal, reasons, source: 'daily',
   }
 }

@@ -35,8 +35,37 @@ interface PositionMeta {
   stopLossPercent: number
   buyScore: number
   buyReasons: string[]
+  // 트레일링 스탑 & 분할 익절
+  highWaterMark: number     // 매수 후 최고가
+  buyPrice: number          // 매수 단가
+  firstPartialSold: boolean // 1차 분할익절 완료 여부
+  atrPercent: number        // ATR% (변동성 기반 포지션 사이징용)
 }
 const positionMetas: Record<string, PositionMeta> = {}
+
+// ─── 섹터 분류 (동일 섹터 동시보유 제한용) ────────
+const SECTOR_MAP: Record<string, string> = {
+  // 반도체
+  '005930': '반도체', '000660': '반도체', '042700': '반도체', '403870': '반도체',
+  // 바이오
+  '068270': '바이오', '207940': '바이오', '009420': '바이오', '145020': '바이오',
+  '326030': '바이오', '328130': '바이오', '196170': '바이오', '141080': '바이오',
+  // 자동차
+  '005380': '자동차', '000270': '자동차', '012330': '자동차',
+  // 배터리/2차전지
+  '373220': '2차전지', '006400': '2차전지', '051910': '2차전지',
+  // 금융
+  '055550': '금융', '105560': '금융', '316140': '금융',
+  // 방산
+  '012450': '방산', '047810': '방산', '001340': '방산',
+  // 플랫폼/IT
+  '035420': 'IT', '035720': 'IT', '036570': 'IT', '259960': 'IT',
+  // 엔터
+  '352820': '엔터', '041510': '엔터', '122870': '엔터',
+  // 철강/소재
+  '005490': '소재', '010130': '소재', '011170': '소재',
+}
+const MAX_PER_SECTOR = 2 // 동일 섹터 최대 보유 종목 수
 
 // ─── 엔진 상태 (메모리) ────────────────────────────
 let dailyOrderCount = 0
@@ -56,6 +85,39 @@ export const restoreStats = (stats: { orders: number; pnl: number; date: string 
   dailyPnL = stats.pnl
   lastResetDate = stats.date
 }
+
+// ─── 거래 성과 학습 (reason별 승률 추적) ────────
+interface ReasonStats { wins: number; losses: number; totalPnl: number }
+const reasonPerformance: Record<string, ReasonStats> = {}
+
+/** 거래 결과를 reason별로 기록 (매도 시 호출) */
+const recordTradeOutcome = (reasons: string[], pnl: number) => {
+  const isWin = pnl > 0
+  for (const reason of reasons) {
+    // 점수/숫자 부분 제거하여 패턴별로 그룹핑
+    const key = reason.replace(/[\d.]+/g, '#').trim()
+    if (!reasonPerformance[key]) reasonPerformance[key] = { wins: 0, losses: 0, totalPnl: 0 }
+    const stat = reasonPerformance[key]!
+    if (isWin) stat.wins++; else stat.losses++
+    stat.totalPnl += pnl
+  }
+}
+
+/** 특정 reason 조합의 역사적 승률 조회 (0~1) */
+const getReasonWinRate = (reasons: string[]): number | null => {
+  let totalWins = 0, totalTrades = 0
+  for (const reason of reasons) {
+    const key = reason.replace(/[\d.]+/g, '#').trim()
+    const stat = reasonPerformance[key]
+    if (stat) {
+      totalWins += stat.wins
+      totalTrades += stat.wins + stat.losses
+    }
+  }
+  return totalTrades >= 5 ? totalWins / totalTrades : null // 최소 5건 이상 데이터 필요
+}
+
+export const getReasonPerformance = () => ({ ...reasonPerformance })
 
 const resetDailyIfNeeded = () => {
   const today = new Date().toISOString().split('T')[0] ?? ''
@@ -98,6 +160,38 @@ const getOrderType = (): string => {
   if (time >= 1540 && time < 1600) return 'after-close'
   if (time >= 1600 && time <= 1800) return 'after-hours'
   return 'market'
+}
+
+/** 현재 KST 시각 (HHMM 정수) */
+const getKSTTime = (): number => {
+  const now = new Date()
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000)
+  return kst.getUTCHours() * 100 + kst.getUTCMinutes()
+}
+
+/** 장 개시 첫 10분 (09:00~09:10) — 가격발견 구간, 변동성 극심 */
+const isOpeningVolatility = (): boolean => {
+  const time = getKSTTime()
+  return time >= 900 && time < 910
+}
+
+/** 점심시간 (13:00~13:50) — 거래량 급감, 낮은 신호 품질 */
+const isLunchTime = (): boolean => {
+  const time = getKSTTime()
+  return time >= 1300 && time < 1350
+}
+
+/** 장 마감 30분 (14:50~15:20) — 마감 물량 정리 구간 */
+const isClosingPeriod = (): boolean => {
+  const time = getKSTTime()
+  return time >= 1450 && time <= 1520
+}
+
+/** 시간대별 점수 보정값 반환 */
+const getTimeAdjustment = (): { scoreBonus: number; label: string } => {
+  if (isOpeningVolatility()) return { scoreBonus: 10, label: '장개시10분(+10점)' }
+  if (isLunchTime()) return { scoreBonus: 15, label: '점심시간(+15점)' }
+  return { scoreBonus: 0, label: '' }
 }
 
 /** 에프터마켓 여부 (장후종가 + 시간외단일가 + NXT 애프터) */
@@ -182,22 +276,70 @@ const _executeScalpingCycleInner = async (
   // 1. 잔고 조회 (실패해도 스캔은 계속)
   const balance = await getBalanceSafe(config.mode)
 
-  // 2. 보유종목 → 동적 익절/손절 판단
+  // 2. 보유종목 → 트레일링 스탑 + 분할 익절 + 동적 익절/손절
   if (balance) {
     for (const holding of balance.holdings) {
       if (dailyOrderCount >= config.maxDailyOrders) break
       if (holding.quantity <= 0) continue
 
       const pnlPercent = holding.profitLossPercent
+      const meta = positionMetas[holding.code]
       let { tp, sl } = await getExitThresholds(holding.code, holding.currentPrice, config.mode)
       // 에프터마켓: 스프레드 넓으므로 익절/손절 기준 1.5배로 확대
       if (isAfterMarketTime()) { tp *= 1.5; sl *= 1.5 }
 
-      // 익절
+      // ★ 트레일링 스탑: 매수 후 최고가 갱신 추적
+      if (meta) {
+        if (holding.currentPrice > meta.highWaterMark) {
+          meta.highWaterMark = holding.currentPrice
+        }
+        const drawdownFromPeak = meta.highWaterMark > 0
+          ? ((meta.highWaterMark - holding.currentPrice) / meta.highWaterMark) * 100
+          : 0
+        const trailThreshold = Math.max(sl, meta.atrPercent * 2) // ATR 기반 트레일 폭
+
+        // 트레일링 발동: 수익 중이었다가 최고가 대비 trailThreshold% 하락
+        if (pnlPercent > 0 && drawdownFromPeak >= trailThreshold && meta.highWaterMark > meta.buyPrice) {
+          const peakPnl = ((meta.highWaterMark - meta.buyPrice) / meta.buyPrice) * 100
+          const log = await executeSell(
+            holding.code, holding.name, holding.quantity, holding.currentPrice,
+            `📉 트레일링 스탑 — 최고 +${peakPnl.toFixed(1)}%에서 -${drawdownFromPeak.toFixed(1)}% 하락 (현재 +${pnlPercent.toFixed(1)}%)`,
+            config
+          )
+          if (log) {
+            newLogs.push(log)
+            if (log.result === 'success') { dailyPnL += holding.profitLoss; delete positionMetas[holding.code] }
+          }
+          continue
+        }
+
+        // ★ 분할 익절: 1차 목표(tp의 60%) 도달 시 보유량 50% 매도
+        if (!meta.firstPartialSold && pnlPercent >= tp * 0.6 && holding.quantity >= 2) {
+          const partialQty = Math.floor(holding.quantity * 0.5)
+          if (partialQty > 0) {
+            console.log(`[스캘핑] ${holding.name} 1차 분할익절 — ${pnlPercent.toFixed(1)}% (목표 ${tp.toFixed(1)}%의 60%) → ${partialQty}/${holding.quantity}주 매도`)
+            const log = await executeSell(
+              holding.code, holding.name, partialQty, holding.currentPrice,
+              `🎯½ 1차 분할익절 ${pnlPercent.toFixed(1)}% (${partialQty}/${holding.quantity}주, 나머지 트레일링)`,
+              config
+            )
+            if (log) {
+              newLogs.push(log)
+              if (log.result === 'success') {
+                meta.firstPartialSold = true
+                dailyPnL += Math.round(holding.profitLoss * (partialQty / holding.quantity))
+              }
+            }
+            continue
+          }
+        }
+      }
+
+      // 전량 익절 (분할익절 이후 잔량 또는 1주만 보유 시)
       if (pnlPercent >= tp) {
         const log = await executeSell(
           holding.code, holding.name, holding.quantity, holding.currentPrice,
-          `🎯 익절 ${pnlPercent.toFixed(1)}% (목표 ${tp.toFixed(1)}%, ATR 기반)`,
+          `🎯 ${meta?.firstPartialSold ? '2차 ' : ''}익절 ${pnlPercent.toFixed(1)}% (목표 ${tp.toFixed(1)}%, ATR 기반)`,
           config
         )
         if (log) {
@@ -251,15 +393,35 @@ const _executeScalpingCycleInner = async (
   // 4. 매수 실행 (잔고 조회 필요)
   const freshBalance = balance ?? await getBalanceSafe(config.mode)
 
-  // ─── 에프터마켓 보정 ───
-  // 에프터마켓 보정: 최소점수만 올리고, 건당금액은 사용자 설정 그대로 유지
+  // ─── 시간대별 보정 ───
   const afterMarket = isAfterMarketTime()
-  const effectiveMinScore = afterMarket ? Math.max(config.minScore + 10, 35) : config.minScore
+  const timeAdj = getTimeAdjustment()
+  let effectiveMinScore = afterMarket ? Math.max(config.minScore + 10, 35) : config.minScore
+  // 장개시 10분 / 점심시간 → 최소점수 추가 상향 (변동성 필터)
+  effectiveMinScore += timeAdj.scoreBonus
   const effectiveMaxPerTrade = config.maxPerTrade  // 사용자 설정 존중
   const effectiveMaxPositions = afterMarket ? Math.min(config.maxPositions, 3) : config.maxPositions
 
   if (afterMarket) {
     console.log(`[스캘핑] 에프터마켓 보정 — 최소점수 ${effectiveMinScore}점, 최대 ${effectiveMaxPositions}종목 (건당 ${effectiveMaxPerTrade.toLocaleString()}원 유지)`)
+  }
+  if (timeAdj.scoreBonus > 0) {
+    console.log(`[스캘핑] 시간대 보정: ${timeAdj.label} → 최소점수 ${effectiveMinScore}점`)
+  }
+
+  // ★ 마감 30분: 보유 포지션 수익 중이면 익절 우선
+  if (isClosingPeriod() && balance) {
+    for (const holding of balance.holdings) {
+      if (holding.quantity <= 0 || dailyOrderCount >= config.maxDailyOrders) continue
+      if (holding.profitLossPercent > 0.3) {
+        console.log(`[스캘핑] 장마감임박 — ${holding.name} 수익 ${holding.profitLossPercent.toFixed(1)}% → 마감 익절`)
+        const log = await executeSell(
+          holding.code, holding.name, holding.quantity, holding.currentPrice,
+          `⏰ 장마감 익절 ${holding.profitLossPercent.toFixed(1)}%`, config
+        )
+        if (log) { newLogs.push(log); if (log.result === 'success') { dailyPnL += holding.profitLoss; delete positionMetas[holding.code] } }
+      }
+    }
   }
 
   if (freshBalance) {
@@ -268,7 +430,19 @@ const _executeScalpingCycleInner = async (
     let freshCash = Math.min(freshBalance.cashBalance, config.budget)
 
     // ─── 4A. 신규 매수 ───
-    const buySignals = scanResults.filter(s => s.signal === 'BUY' && s.score >= effectiveMinScore)
+    // ★ 과거 성과 학습: 승률 낮은 패턴(< 40%) 감점 → 필터링
+    const buySignals = scanResults
+      .map(s => {
+        const winRate = getReasonWinRate(s.reasons)
+        if (winRate !== null && winRate < 0.4) {
+          return { ...s, score: s.score - 10, reasons: [...s.reasons, `승률 ${(winRate * 100).toFixed(0)}% 감점`] }
+        }
+        if (winRate !== null && winRate > 0.7) {
+          return { ...s, score: s.score + 5, reasons: [...s.reasons, `승률 ${(winRate * 100).toFixed(0)}% 가점`] }
+        }
+        return s
+      })
+      .filter(s => s.signal === 'BUY' && s.score >= effectiveMinScore)
     const newBuyTargets: typeof scanResults = []
     const addBuyTargets: { scan: (typeof scanResults)[number]; holding: (typeof freshBalance.holdings)[number] }[] = []
 
@@ -321,11 +495,28 @@ const _executeScalpingCycleInner = async (
         continue
       }
 
-      // 투자금 배분: maxPerTrade 우선, 단 남은 현금의 50%는 넘지 않도록
-      const investAmount = Math.min(effectiveMaxPerTrade, freshCash * 0.5)
+      // ★ 섹터 한도: 동일 섹터 MAX_PER_SECTOR 종목 초과 시 매수 제한
+      const targetSector = SECTOR_MAP[target.code]
+      if (targetSector) {
+        const sectorCount = freshBalance.holdings.filter(h =>
+          h.quantity > 0 && SECTOR_MAP[h.code] === targetSector
+        ).length
+        if (sectorCount >= MAX_PER_SECTOR) {
+          console.log(`[스캘핑] ${target.name} — ${targetSector} 섹터 이미 ${sectorCount}종목 보유 (한도 ${MAX_PER_SECTOR})`)
+          continue
+        }
+      }
+
+      // ★ ATR 기반 포지션 사이징: 변동성 큰 종목은 투자금 축소
+      // riskAmount = budget * 1% → positionSize = riskAmount / atrPercent
+      const riskBudget = config.budget * 0.01
+      const atrAdjustedMax = target.atrPercent > 0
+        ? Math.min(effectiveMaxPerTrade, riskBudget / (target.atrPercent / 100))
+        : effectiveMaxPerTrade
+      const investAmount = Math.min(atrAdjustedMax, freshCash * 0.5)
       const quantity = Math.floor(investAmount / target.price)
       if (quantity <= 0) {
-        console.log(`[스캘핑] ${target.name} 수량 0 — 가격 ${target.price.toLocaleString()}원 > 투자금 ${investAmount.toLocaleString()}원`)
+        console.log(`[스캘핑] ${target.name} 수량 0 — 가격 ${target.price.toLocaleString()}원 > 투자금 ${investAmount.toLocaleString()}원 (ATR ${target.atrPercent.toFixed(1)}%)`)
         continue
       }
 
@@ -338,12 +529,16 @@ const _executeScalpingCycleInner = async (
         newLogs.push(log)
         if (log.result === 'success') {
           positionSlots--
-          freshCash -= quantity * target.price  // 매수 성공 시 잔고 차감
+          freshCash -= quantity * target.price
           positionMetas[target.code] = {
             takeProfitPercent: target.takeProfitPercent,
             stopLossPercent: target.stopLossPercent,
             buyScore: target.score,
             buyReasons: target.reasons,
+            highWaterMark: target.price,
+            buyPrice: target.price,
+            firstPartialSold: false,
+            atrPercent: target.atrPercent,
           }
         }
       }
@@ -381,6 +576,10 @@ const _executeScalpingCycleInner = async (
               stopLossPercent: target.stopLossPercent,
               buyScore: target.score,
               buyReasons: target.reasons,
+              highWaterMark: prevMeta?.highWaterMark ?? target.price,
+              buyPrice: prevMeta?.buyPrice ?? target.price,
+              firstPartialSold: prevMeta?.firstPartialSold ?? false,
+              atrPercent: target.atrPercent,
             }
           }
         }
@@ -513,7 +712,15 @@ const executeSell = async (
     }, config.mode)
 
     const sellSuccess = result.status === 'executed'
-    if (sellSuccess) dailyOrderCount++
+    if (sellSuccess) {
+      dailyOrderCount++
+      // ★ 거래 성과 학습: 매도 성공 시 매수 당시 reason별 승률 기록
+      const meta = positionMetas[code]
+      if (meta) {
+        const pnl = (price - meta.buyPrice) * quantity
+        recordTradeOutcome(meta.buyReasons, pnl)
+      }
+    }
     const log: TradeLogEntry = {
       id: `${Date.now()}-${code}-sell`,
       timestamp: new Date().toISOString(),
