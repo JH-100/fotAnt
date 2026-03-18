@@ -40,6 +40,17 @@ let dailyPnL = 0
 const tradeLogs: TradeLogEntry[] = []
 let lastScanResults: ScanResult[] = []
 
+// 외부에서 로그/통계 복원용 (서버 스케줄러가 파일에서 읽어서 주입)
+export const restoreLogs = (logs: TradeLogEntry[]) => {
+  tradeLogs.length = 0
+  tradeLogs.push(...logs)
+}
+export const restoreStats = (stats: { orders: number; pnl: number; date: string }) => {
+  dailyOrderCount = stats.orders
+  dailyPnL = stats.pnl
+  lastResetDate = stats.date
+}
+
 const resetDailyIfNeeded = () => {
   const today = new Date().toISOString().split('T')[0] ?? ''
   if (today !== lastResetDate) {
@@ -200,20 +211,59 @@ export const executeScalpingCycle = async (
     let positionSlots = config.maxPositions - currentPositionCount
     const freshCash = Math.min(freshBalance.cashBalance, config.budget)
 
-    const buyTargets = scanResults.filter(s =>
-      s.signal === 'BUY' &&
-      s.score >= config.minScore &&
-      !freshBalance.holdings.find(h => h.code === s.code && h.quantity > 0)
-    )
+    // ─── 4A. 신규 매수 ───
+    const buySignals = scanResults.filter(s => s.signal === 'BUY' && s.score >= config.minScore)
+    const newBuyTargets: typeof scanResults = []
+    const addBuyTargets: { scan: (typeof scanResults)[number]; holding: (typeof freshBalance.holdings)[number] }[] = []
 
-    for (const target of buyTargets) {
-      if (dailyOrderCount >= config.maxDailyOrders) break
+    for (const s of buySignals) {
+      const alreadyHeld = freshBalance.holdings.find(h => h.code === s.code && h.quantity > 0)
+      if (alreadyHeld) {
+        // 추가 매수 판단: 불타기 / 물타기
+        const totalInvested = alreadyHeld.avgPrice * alreadyHeld.quantity
+        const maxPerStock = config.maxPerTrade * 2 // 1종목 최대 건당금액의 2배
+        const canAddMore = totalInvested < maxPerStock
+
+        if (!canAddMore) {
+          console.log(`[스캘핑] ${s.name}(${s.score}점) 추가매수 불가 — 이미 ${totalInvested.toLocaleString()}원 투자 (한도 ${maxPerStock.toLocaleString()}원)`)
+        } else if (s.score >= 40 && alreadyHeld.profitLossPercent > 0) {
+          // 불타기: 강한 신호 + 수익 중 → 추세 추종
+          console.log(`[스캘핑] ${s.name}(${s.score}점) 🔥 불타기 대상 — 수익 ${alreadyHeld.profitLossPercent.toFixed(1)}% + 강매수 신호`)
+          addBuyTargets.push({ scan: s, holding: alreadyHeld })
+        } else if (s.score >= 35 && alreadyHeld.profitLossPercent < -1 && alreadyHeld.profitLossPercent > -3) {
+          // 물타기: 소폭 하락(-1%~-3%) + 강한 매수 신호 → 평단가 낮추기
+          console.log(`[스캘핑] ${s.name}(${s.score}점) 💧 물타기 대상 — 하락 ${alreadyHeld.profitLossPercent.toFixed(1)}% + 매수 신호 유지`)
+          addBuyTargets.push({ scan: s, holding: alreadyHeld })
+        } else {
+          console.log(`[스캘핑] ${s.name}(${s.score}점) 보유 중(${alreadyHeld.quantity}주, ${alreadyHeld.profitLossPercent.toFixed(1)}%) — 추가매수 조건 미달`)
+        }
+      } else {
+        newBuyTargets.push(s)
+      }
+    }
+
+    if (positionSlots <= 0 && newBuyTargets.length > 0) {
+      console.log(`[스캘핑] 포지션 슬롯 없음 (${currentPositionCount}/${config.maxPositions} 보유 중) — 신규 매수 불가`)
+    }
+    if (freshCash < config.maxPerTrade * 0.3) {
+      console.log(`[스캘핑] 현금 부족 (${freshCash.toLocaleString()}원 < 최소 ${Math.round(config.maxPerTrade * 0.3).toLocaleString()}원)`)
+    }
+
+    // 신규 종목 매수
+    for (const target of newBuyTargets) {
+      if (dailyOrderCount >= config.maxDailyOrders) {
+        console.log(`[스캘핑] 일일 주문 한도 도달 (${dailyOrderCount}/${config.maxDailyOrders})`)
+        break
+      }
       if (positionSlots <= 0) break
       if (freshCash < config.maxPerTrade * 0.3) break
 
-      const investAmount = Math.min(config.maxPerTrade, freshCash / positionSlots)
+      const investAmount = Math.min(config.maxPerTrade, freshCash / Math.max(positionSlots, 1))
       const quantity = Math.floor(investAmount / target.price)
-      if (quantity <= 0) continue
+      if (quantity <= 0) {
+        console.log(`[스캘핑] ${target.name} 수량 0 — 가격 ${target.price.toLocaleString()}원 > 투자금 ${investAmount.toLocaleString()}원`)
+        continue
+      }
 
       const log = await executeBuy(
         target.code, target.name, quantity, target.price,
@@ -233,11 +283,48 @@ export const executeScalpingCycle = async (
         }
       }
     }
+
+    // ─── 4B. 추가 매수 (불타기/물타기) ───
+    for (const { scan: target, holding } of addBuyTargets) {
+      if (dailyOrderCount >= config.maxDailyOrders) break
+      if (freshCash < config.maxPerTrade * 0.3) break
+
+      const totalInvested = holding.avgPrice * holding.quantity
+      const maxPerStock = config.maxPerTrade * 2
+      const remainBudget = maxPerStock - totalInvested
+      const investAmount = Math.min(config.maxPerTrade * 0.5, remainBudget, freshCash * 0.3) // 추가매수는 보수적 (50%)
+      const quantity = Math.floor(investAmount / target.price)
+      if (quantity <= 0) continue
+
+      const isScaleUp = holding.profitLossPercent > 0
+      const label = isScaleUp ? '🔥 불타기' : '💧 물타기'
+      const log = await executeBuy(
+        target.code, target.name, quantity, target.price,
+        `${label} [${target.score}점] 기존 ${holding.quantity}주(${holding.profitLossPercent.toFixed(1)}%) + ${quantity}주 추가`,
+        config
+      )
+      if (log) {
+        newLogs.push(log)
+        if (log.result === 'success') {
+          // 추가매수 시 익절/손절 기준 업데이트 (더 강한 신호면 기준 갱신)
+          const prevMeta = positionMetas[target.code]
+          if (!prevMeta || target.score > prevMeta.buyScore) {
+            positionMetas[target.code] = {
+              takeProfitPercent: target.takeProfitPercent,
+              stopLossPercent: target.stopLossPercent,
+              buyScore: target.score,
+              buyReasons: target.reasons,
+            }
+          }
+        }
+      }
+    }
   } else {
     console.log('[스캘핑] 잔고 조회 불가 — 매수 건너뜀 (스캔 결과만 반환)')
   }
 
   while (tradeLogs.length > 500) tradeLogs.shift()
+
   return { logs: newLogs, scan: scanResults }
 }
 

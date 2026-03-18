@@ -1,7 +1,53 @@
-// 서버 사이드 스캘핑 스케줄러 — 브라우저 없이 자동 실행
-import { executeScalpingCycle, isMarketOpen, getScalpingLogs, getLastScan, getDailyStats } from './scalping-engine'
+// 서버 사이드 스캘핑 스케줄러 — 브라우저 없이 자동 실행 + 로그 파일 저장
+import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { join } from 'path'
+import {
+  executeScalpingCycle, isMarketOpen, getScalpingLogs, getLastScan, getDailyStats,
+  restoreLogs, restoreStats,
+} from './scalping-engine'
 import type { ScalpingConfig } from './scalping-engine'
+import type { TradeLogEntry } from './strategies/types'
 
+// ─── 파일 저장/복원 (서버 전용) ────────────────────
+const LOG_FILE = join(process.cwd(), '.scalping-logs.json')
+const STATS_FILE = join(process.cwd(), '.scalping-stats.json')
+
+const loadAndRestore = () => {
+  try {
+    if (existsSync(LOG_FILE)) {
+      const logs: TradeLogEntry[] = JSON.parse(readFileSync(LOG_FILE, 'utf-8'))
+      restoreLogs(logs)
+      console.log(`[스캘핑] 로그 ${logs.length}건 복원됨`)
+    }
+  } catch { /* ignore */ }
+  try {
+    if (existsSync(STATS_FILE)) {
+      const stats = JSON.parse(readFileSync(STATS_FILE, 'utf-8'))
+      restoreStats(stats)
+      console.log(`[스캘핑] 통계 복원됨 (주문 ${stats.orders}건, 손익 ${stats.pnl}원)`)
+    }
+  } catch { /* ignore */ }
+}
+
+const persistLogs = () => {
+  try {
+    const logs = getScalpingLogs().slice(0, 200)
+    writeFileSync(LOG_FILE, JSON.stringify(logs), 'utf-8')
+  } catch { /* ignore */ }
+}
+
+const persistStats = () => {
+  try {
+    const stats = getDailyStats()
+    const today = new Date().toISOString().split('T')[0] ?? ''
+    writeFileSync(STATS_FILE, JSON.stringify({ ...stats, date: today }), 'utf-8')
+  } catch { /* ignore */ }
+}
+
+// 서버 시작 시 자동 복원
+loadAndRestore()
+
+// ─── 스케줄러 상태 ────────────────────────────────
 interface SchedulerState {
   isRunning: boolean
   config: ScalpingConfig
@@ -12,7 +58,6 @@ interface SchedulerState {
   cycleCount: number
 }
 
-// 서버 메모리에 스케줄러 상태 저장
 const state: SchedulerState = {
   isRunning: false,
   config: {
@@ -34,7 +79,6 @@ const INTERVAL_MS = 3 * 60 * 1000 // 3분
 
 /** 1사이클 실행 */
 const runCycle = async () => {
-  // 장 운영시간 아니면 스킵 (주말, 야간)
   if (!isMarketOpen()) {
     console.log('[스캘핑] 장 운영시간 아님 — 스킵')
     return
@@ -52,7 +96,6 @@ const runCycle = async () => {
 
     console.log(`[스캘핑] 완료 — 스캔 ${result.scan.length}종목 (매수신호 ${buySignals}, 최소점수 ${state.config.minScore}) / 매수 ${buyCount}건, 매도 ${sellCount}건${failCount > 0 ? `, 실패 ${failCount}건` : ''}`)
 
-    // 매수 신호는 있지만 주문이 없는 경우 원인 로깅
     if (buySignals > 0 && buyCount === 0 && sellCount === 0) {
       const topBuy = result.scan.filter(s => s.signal === 'BUY')[0]
       console.log(`[스캘핑] 매수 미실행 — 상위 종목: ${topBuy?.name}(${topBuy?.score}점) / 최소점수: ${state.config.minScore}`)
@@ -61,6 +104,10 @@ const runCycle = async () => {
         failedLogs.forEach(l => console.log(`[스캘핑] 실패: ${l.name} ${l.action} — ${l.message}`))
       }
     }
+
+    // 로그/통계 파일 저장
+    if (result.logs.length > 0) persistLogs()
+    persistStats()
 
     state.lastError = null
   } catch (error) {
@@ -74,7 +121,6 @@ const runCycle = async () => {
 /** 스케줄러 시작 */
 export const startScheduler = (config?: Partial<ScalpingConfig>) => {
   if (state.isRunning) {
-    // 설정만 업데이트
     if (config) Object.assign(state.config, config)
     return
   }
@@ -89,10 +135,7 @@ export const startScheduler = (config?: Partial<ScalpingConfig>) => {
 
   console.log(`[스캘핑] 스케줄러 시작 (${state.config.mode} 모드, ${INTERVAL_MS / 1000}초 간격)`)
 
-  // 즉시 1회 실행
   runCycle()
-
-  // 3분 간격 반복
   state.intervalId = setInterval(runCycle, INTERVAL_MS)
 }
 
@@ -106,7 +149,9 @@ export const stopScheduler = () => {
   }
 
   state.isRunning = false
-  console.log('[스캘핑] 스케줄러 중지')
+  persistLogs()
+  persistStats()
+  console.log('[스캘핑] 스케줄러 중지 (로그 저장됨)')
 }
 
 /** 스케줄러 상태 조회 */
