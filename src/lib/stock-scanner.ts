@@ -35,6 +35,11 @@ export interface ScanResult {
   source: 'minute' | 'daily' // 어떤 데이터로 분석했는지
 }
 
+// ETF / 레버리지 / 인버스 필터 (파생상품 ETF 거래신청 필요 → 스캔/매수 차단)
+const ETF_PREFIXES = ['KODEX', 'TIGER', 'KOSEF', 'KBSTAR', 'ARIRANG', 'SOL', 'ACE', 'HANARO']
+const isETF = (name: string): boolean =>
+  ETF_PREFIXES.some(p => name.startsWith(p)) || name.includes('레버리지') || name.includes('인버스')
+
 // ════════════════════════════════════════════════════
 // 분봉 분석 (장중 우선)
 // ════════════════════════════════════════════════════
@@ -317,13 +322,13 @@ const AI_WATCH_LIST = [
   { code: '036570', name: '엔씨소프트' },
   { code: '112040', name: '위메이드' },
   { code: '293490', name: '카카오게임즈' },
-  // ETF (사용자 요청: 인버스/ETF도 AI추천이면 매수)
-  { code: '069500', name: 'KODEX 200' },
-  { code: '114800', name: 'KODEX 인버스' },
-  { code: '252670', name: 'KODEX 200선물인버스2X' },
-  { code: '122630', name: 'KODEX 레버리지' },
-  { code: '133690', name: 'TIGER 미국나스닥100' },
-  { code: '381180', name: 'TIGER 미국테크TOP10 INDXX' },
+  // 추가 중형주
+  { code: '003490', name: '대한항공' },
+  { code: '010130', name: '고려아연' },
+  { code: '012330', name: '현대모비스' },
+  { code: '066570', name: 'LG전자' },
+  { code: '003670', name: '포스코퓨처엠' },
+  { code: '028260', name: '삼성물산' },
 ]
 
 /** AI 추천 — 일봉 기술분석 BUY인 종목만 반환 */
@@ -377,14 +382,14 @@ const getAIRecommendations = async (
 
 /** 시장 전체 스캔 — KIS 거래량순위 + AI추천 + 분봉/일봉 분석 */
 export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
-  // 1. KIS 거래량 순위 — 가격 500원 이상, ETF/인버스 포함 (AI추천일 수 있으니)
+  // 1. KIS 거래량 순위 — ETF/레버리지/인버스 제외, 가격 500원 이상
   let trending: { code: string; name: string; price: number; change: number }[]
   try {
     const rank = await getKisVolumeRank(mode)
     trending = rank
-      .filter(r => r.price >= 500)
+      .filter(r => r.price >= 500 && !isETF(r.name))
       .map(r => ({ code: r.code, name: r.name, price: r.price, change: r.change }))
-    console.log(`[스캐너] KIS 거래량순위 ${rank.length}종목 중 ${trending.length}종목 대상`)
+    console.log(`[스캐너] KIS 거래량순위 ${rank.length}종목 중 ${trending.length}종목 대상 (ETF/레버리지/인버스 제외)`)
   } catch (err) {
     console.log(`[스캐너] KIS 거래량순위 조회 실패: ${err instanceof Error ? err.message : String(err)}`)
     trending = []

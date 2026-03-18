@@ -6,6 +6,11 @@ import { scanMarket, type ScanResult } from './stock-scanner'
 import { calcMinuteATR } from './indicators'
 import type { TradeLogEntry } from './strategies/types'
 
+// ETF/레버리지/인버스 필터 (파생상품 ETF 거래신청 필요 → 매수 차단)
+const ETF_PREFIXES = ['KODEX', 'TIGER', 'KOSEF', 'KBSTAR', 'ARIRANG', 'SOL', 'ACE', 'HANARO']
+const isETF = (name: string): boolean =>
+  ETF_PREFIXES.some(p => name.startsWith(p)) || name.includes('레버리지') || name.includes('인버스')
+
 export interface ScalpingConfig {
   budget: number              // 총 투자 한도 (원)
   maxPerTrade: number         // 건당 최대 금액 (원)
@@ -258,6 +263,12 @@ export const executeScalpingCycle = async (
       if (positionSlots <= 0) break
       if (freshCash < config.maxPerTrade * 0.3) break
 
+      // ETF/레버리지/인버스 매수 차단
+      if (isETF(target.name)) {
+        console.log(`[스캘핑] ${target.name} — ETF/레버리지/인버스 매수 차단`)
+        continue
+      }
+
       const investAmount = Math.min(config.maxPerTrade, freshCash / Math.max(positionSlots, 1))
       const quantity = Math.floor(investAmount / target.price)
       if (quantity <= 0) {
@@ -288,6 +299,7 @@ export const executeScalpingCycle = async (
     for (const { scan: target, holding } of addBuyTargets) {
       if (dailyOrderCount >= config.maxDailyOrders) break
       if (freshCash < config.maxPerTrade * 0.3) break
+      if (isETF(target.name)) continue // ETF 추가매수도 차단
 
       const totalInvested = holding.avgPrice * holding.quantity
       const maxPerStock = config.maxPerTrade * 2
