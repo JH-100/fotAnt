@@ -264,29 +264,46 @@ export const placeKisOrder = async (request: KisOrderRequest, mode?: TradingMode
   const cfg = getModeConfig(m)
   const { cano, acntPrdtCd } = parseAccount(cfg.accountNo)
   const isBuy = request.side === 'buy'
+
+  // 신규 tr_id 사용 (구TR은 사전고지 없이 막힐 수 있음)
   const trId = m === 'mock'
-    ? (isBuy ? 'VTTC0802U' : 'VTTC0801U')
-    : (isBuy ? 'TTTC0802U' : 'TTTC0801U')
+    ? (isBuy ? 'VTTC0012U' : 'VTTC0011U')
+    : (isBuy ? 'TTTC0012U' : 'TTTC0011U')
+
+  // 거래소 결정 (모의투자는 KRX만 가능)
+  const exchange = (m === 'mock') ? 'KRX' : (request.exchange ?? 'KRX')
 
   // ORD_DVSN 매핑
   const ordDvsnMap: Record<string, string> = {
     market: '01',
     limit: '00',
-    'pre-market': '05',
-    'after-close': '06',
-    'after-hours': '07',
+    'pre-market': '05',    // KRX 장전시간외
+    'after-close': '06',   // KRX 장후시간외종가
+    'after-hours': '07',   // KRX 시간외단일가
   }
 
   const needsPrice = request.orderType === 'limit' || request.orderType === 'after-hours'
+    || exchange === 'NXT'  // NXT는 항상 지정가 필요
   const ordUnpr = needsPrice ? String(request.price ?? 0) : '0'
+
+  // NXT일 때 ORD_DVSN은 지정가(00) 사용 (NXT는 일반 시장가 불가)
+  let ordDvsn = ordDvsnMap[request.orderType] ?? '01'
+  if (exchange === 'NXT') {
+    // NXT 허용: 00(지정가), 03(최유리), 04(최우선), 11~16(IOC/FOK), 21~24(중간가/스톱)
+    // 시장가(01), 장전(05), 장후(06), 시간외단일가(07)는 NXT 불가 → 지정가로 변환
+    if (['01', '02', '05', '06', '07'].includes(ordDvsn)) {
+      ordDvsn = '00' // 지정가
+    }
+  }
 
   const body: Record<string, string> = {
     CANO: cano,
     ACNT_PRDT_CD: acntPrdtCd,
     PDNO: request.code,
-    ORD_DVSN: ordDvsnMap[request.orderType] ?? '01',
+    ORD_DVSN: ordDvsn,
     ORD_QTY: String(request.quantity),
     ORD_UNPR: ordUnpr,
+    EXCG_ID_DVSN_CD: exchange,  // KRX | NXT | SOR
   }
 
   const [headers, hashkey] = await Promise.all([

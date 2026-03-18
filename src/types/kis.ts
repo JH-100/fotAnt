@@ -36,6 +36,7 @@ export interface KisOrderRequest {
   quantity: number
   price?: number
   orderType: 'market' | 'limit' | 'pre-market' | 'after-close' | 'after-hours'
+  exchange?: 'KRX' | 'NXT' | 'SOR'  // 거래소 구분 (기본 KRX, 모의투자는 KRX만)
 }
 
 /** 주문 결과 */

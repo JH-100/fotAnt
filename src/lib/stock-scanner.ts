@@ -287,62 +287,154 @@ const analyzeStock = async (
 // AI 추천 (일봉 기술분석) — 거래량순위 밖 종목 발굴
 // ════════════════════════════════════════════════════
 
-/** AI 추천 종목 리스트 — 주요 대형주/중형주/테마주 */
-const AI_WATCH_LIST = [
-  // 대형주
+/** AI 워치리스트 — 종목검색 마스터와 동기화된 전체 목록 (ETF 제외) */
+const STOCK_MASTER: { code: string; name: string }[] = [
+  // ─── 시가총액 상위 40 ───
   { code: '005930', name: '삼성전자' },
   { code: '000660', name: 'SK하이닉스' },
   { code: '373220', name: 'LG에너지솔루션' },
+  { code: '207940', name: '삼성바이오로직스' },
+  { code: '005380', name: '현대차' },
+  { code: '000270', name: '기아' },
+  { code: '068270', name: '셀트리온' },
   { code: '035420', name: 'NAVER' },
   { code: '035720', name: '카카오' },
   { code: '051910', name: 'LG화학' },
   { code: '006400', name: '삼성SDI' },
-  { code: '068270', name: '셀트리온' },
-  { code: '005380', name: '현대차' },
-  { code: '000270', name: '기아' },
-  { code: '207940', name: '삼성바이오로직스' },
+  { code: '003670', name: '포스코퓨처엠' },
+  { code: '028260', name: '삼성물산' },
   { code: '055550', name: '신한지주' },
   { code: '105560', name: 'KB금융' },
-  // 성장주/테마
-  { code: '247540', name: '에코프로비엠' },
-  { code: '086520', name: '에코프로' },
-  { code: '196170', name: '알테오젠' },
-  { code: '328130', name: '루닛' },
+  { code: '012330', name: '현대모비스' },
+  { code: '066570', name: 'LG전자' },
+  { code: '003550', name: 'LG' },
+  { code: '034730', name: 'SK' },
+  { code: '096770', name: 'SK이노베이션' },
+  { code: '032830', name: '삼성생명' },
+  { code: '030200', name: 'KT' },
+  { code: '086790', name: '하나금융지주' },
+  { code: '017670', name: 'SK텔레콤' },
+  { code: '316140', name: '우리금융지주' },
+  { code: '009150', name: '삼성전기' },
+  { code: '034020', name: '두산에너빌리티' },
+  { code: '018260', name: '삼성에스디에스' },
+  { code: '011200', name: 'HMM' },
+  { code: '009540', name: 'HD한국조선해양' },
+  { code: '010950', name: 'S-Oil' },
+  { code: '000810', name: '삼성화재' },
+  { code: '033780', name: 'KT&G' },
   { code: '259960', name: '크래프톤' },
   { code: '352820', name: '하이브' },
+  { code: '196170', name: '알테오젠' },
+  { code: '329180', name: 'HD현대중공업' },
+  { code: '267260', name: 'HD현대' },
+  { code: '005490', name: 'POSCO홀딩스' },
+  { code: '138040', name: '메리츠금융지주' },
+  // ─── 성장주/테마 ───
+  { code: '247540', name: '에코프로비엠' },
+  { code: '086520', name: '에코프로' },
+  { code: '328130', name: '루닛' },
   { code: '263750', name: '펄어비스' },
-  // 바이오
+  { code: '293490', name: '카카오게임즈' },
+  { code: '112040', name: '위메이드' },
+  { code: '036570', name: '엔씨소프트' },
+  { code: '251270', name: '넷마블' },
+  { code: '323410', name: '카카오뱅크' },
+  { code: '377300', name: '카카오페이' },
+  // ─── 바이오/헬스케어 ───
   { code: '009420', name: '한올바이오파마' },
   { code: '214150', name: '클래시스' },
   { code: '145020', name: '휴젤' },
   { code: '950160', name: '코오롱티슈진' },
-  // 반도체/IT
+  { code: '000100', name: '유한양행' },
+  { code: '326030', name: 'SK바이오팜' },
+  { code: '302440', name: 'SK바이오사이언스' },
+  // ─── 반도체/IT ───
   { code: '042700', name: '한미반도체' },
   { code: '089030', name: '테크윙' },
-  { code: '036570', name: '엔씨소프트' },
-  { code: '112040', name: '위메이드' },
-  { code: '293490', name: '카카오게임즈' },
-  // 추가 중형주
+  { code: '403870', name: 'HPSP' },
+  { code: '058470', name: '리노공업' },
+  { code: '039030', name: '이오테크닉스' },
+  { code: '005290', name: '동진쎄미켐' },
+  { code: '064760', name: '티씨케이' },
+  { code: '357780', name: '솔브레인' },
+  // ─── 방산/항공/조선 ───
+  { code: '012450', name: '한화에어로스페이스' },
+  { code: '047810', name: '한국항공우주' },
+  { code: '272210', name: '한화시스템' },
+  { code: '010140', name: '삼성중공업' },
   { code: '003490', name: '대한항공' },
+  { code: '180640', name: '한진칼' },
+  // ─── 소재/에너지 ───
   { code: '010130', name: '고려아연' },
-  { code: '012330', name: '현대모비스' },
-  { code: '066570', name: 'LG전자' },
-  { code: '003670', name: '포스코퓨처엠' },
-  { code: '028260', name: '삼성물산' },
+  { code: '004020', name: '현대제철' },
+  { code: '009830', name: '한화솔루션' },
+  { code: '011790', name: 'SKC' },
+  { code: '047050', name: '포스코인터내셔널' },
+  { code: '298050', name: '효성첨단소재' },
+  // ─── 유통/소비재 ───
+  { code: '090430', name: '아모레퍼시픽' },
+  { code: '004170', name: '신세계' },
+  { code: '139480', name: '이마트' },
+  { code: '271560', name: '오리온' },
+  { code: '097950', name: 'CJ제일제당' },
+  { code: '021240', name: '코웨이' },
+  // ─── 인프라/유틸리티 ───
+  { code: '015760', name: '한국전력' },
+  { code: '036460', name: '한국가스공사' },
+  { code: '024110', name: '기업은행' },
+  { code: '086280', name: '현대글로비스' },
+  { code: '161390', name: '한국타이어앤테크놀로지' },
+  { code: '088980', name: '맥쿼리인프라' },
+  { code: '402340', name: 'SK스퀘어' },
+  { code: '241560', name: '두산밥캣' },
+  { code: '000720', name: '현대건설' },
+  { code: '041510', name: 'SM' },
 ]
 
-/** AI 추천 — 일봉 기술분석 BUY인 종목만 반환 */
+// 사용자가 추가한 커스텀 워치리스트 (런타임 동적 추가)
+const customWatchList: { code: string; name: string }[] = []
+
+/** 커스텀 워치리스트에 종목 추가 (외부에서 호출) */
+export const addToWatchList = (code: string, name: string) => {
+  if (customWatchList.find(s => s.code === code)) return
+  if (STOCK_MASTER.find(s => s.code === code)) return
+  if (isETF(name)) return
+  customWatchList.push({ code, name })
+  console.log(`[스캐너] 워치리스트 추가: ${name}(${code}) — 총 ${STOCK_MASTER.length + customWatchList.length}종목`)
+}
+
+/** 커스텀 워치리스트 제거 */
+export const removeFromWatchList = (code: string) => {
+  const idx = customWatchList.findIndex(s => s.code === code)
+  if (idx !== -1) customWatchList.splice(idx, 1)
+}
+
+/** 현재 전체 워치리스트 조회 */
+export const getWatchList = () => [...STOCK_MASTER, ...customWatchList]
+
+/** AI 워치리스트 = STOCK_MASTER + 커스텀 (ETF 제외) */
+const getAIWatchList = (): { code: string; name: string }[] => {
+  return [...STOCK_MASTER, ...customWatchList].filter(s => !isETF(s.name))
+}
+
+/** AI 추천 — 일봉 기술분석 BUY인 종목만 반환
+ *  STOCK_MASTER + 커스텀 워치리스트 전체를 분석 (배치 5개씩, API 부담 분산)
+ */
 const getAIRecommendations = async (
   mode?: TradingMode,
   excludeCodes?: Set<string>
 ): Promise<{ code: string; name: string; price: number; change: number; aiScore: number }[]> => {
-  const targets = AI_WATCH_LIST.filter(s => !excludeCodes?.has(s.code))
+  const targets = getAIWatchList().filter(s => !excludeCodes?.has(s.code))
   if (targets.length === 0) return []
 
+  console.log(`[AI추천] 워치리스트 ${targets.length}종목 분석 시작`)
   const results: { code: string; name: string; price: number; change: number; aiScore: number }[] = []
 
-  for (let i = 0; i < targets.length; i += 3) {
-    const batch = targets.slice(i, i + 3)
+  // 5개씩 병렬 분석 (API rate limit 고려)
+  const batchSize = 5
+  for (let i = 0; i < targets.length; i += batchSize) {
+    const batch = targets.slice(i, i + batchSize)
     const batchResults = await Promise.allSettled(
       batch.map(async (stock) => {
         const data = await getKisDailyPrices(stock.code, 60, mode)
@@ -400,7 +492,7 @@ export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
   let aiCount = 0
   try {
     const aiPicks = await getAIRecommendations(mode, rankCodes)
-    for (const pick of aiPicks.slice(0, 10)) { // 최대 10종목 추가
+    for (const pick of aiPicks.slice(0, 20)) { // 최대 20종목 추가 (워치리스트 확대)
       trending.push({ code: pick.code, name: pick.name, price: pick.price, change: pick.change })
       aiCount++
     }

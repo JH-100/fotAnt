@@ -94,6 +94,12 @@ const getOrderType = (): string => {
   return 'market'
 }
 
+/** 에프터마켓 여부 (장후종가 + 시간외단일가 + NXT 애프터) */
+const isAfterMarketTime = (): boolean => {
+  const ot = getOrderType()
+  return ot === 'after-close' || ot === 'after-hours'
+}
+
 /** 보유종목의 동적 익절/손절 기준 실시간 계산 (매수 시 저장값 없으면 분봉 ATR로) */
 const getExitThresholds = async (code: string, currentPrice: number, mode?: TradingMode): Promise<{ tp: number; sl: number }> => {
   // 매수 시 저장한 기준이 있으면 사용
@@ -152,7 +158,9 @@ export const executeScalpingCycle = async (
       if (holding.quantity <= 0) continue
 
       const pnlPercent = holding.profitLossPercent
-      const { tp, sl } = await getExitThresholds(holding.code, holding.currentPrice, config.mode)
+      let { tp, sl } = await getExitThresholds(holding.code, holding.currentPrice, config.mode)
+      // 에프터마켓: 스프레드 넓으므로 익절/손절 기준 1.5배로 확대
+      if (isAfterMarketTime()) { tp *= 1.5; sl *= 1.5 }
 
       // 익절
       if (pnlPercent >= tp) {
@@ -211,19 +219,36 @@ export const executeScalpingCycle = async (
 
   // 4. 매수 실행 (잔고 조회 필요)
   const freshBalance = balance ?? await getBalanceSafe(config.mode)
+
+  // ─── 에프터마켓 보정 ───
+  // 에프터마켓 보정: 최소점수만 올리고, 건당금액은 사용자 설정 그대로 유지
+  const afterMarket = isAfterMarketTime()
+  const effectiveMinScore = afterMarket ? Math.max(config.minScore + 15, 40) : config.minScore
+  const effectiveMaxPerTrade = config.maxPerTrade  // 사용자 설정 존중
+  const effectiveMaxPositions = afterMarket ? Math.min(config.maxPositions, 3) : config.maxPositions
+
+  if (afterMarket) {
+    console.log(`[스캘핑] 에프터마켓 보정 — 최소점수 ${effectiveMinScore}점, 최대 ${effectiveMaxPositions}종목 (건당 ${effectiveMaxPerTrade.toLocaleString()}원 유지)`)
+  }
+
   if (freshBalance) {
     const currentPositionCount = freshBalance.holdings.filter(h => h.quantity > 0).length
-    let positionSlots = config.maxPositions - currentPositionCount
+    let positionSlots = effectiveMaxPositions - currentPositionCount
     const freshCash = Math.min(freshBalance.cashBalance, config.budget)
 
     // ─── 4A. 신규 매수 ───
-    const buySignals = scanResults.filter(s => s.signal === 'BUY' && s.score >= config.minScore)
+    const buySignals = scanResults.filter(s => s.signal === 'BUY' && s.score >= effectiveMinScore)
     const newBuyTargets: typeof scanResults = []
     const addBuyTargets: { scan: (typeof scanResults)[number]; holding: (typeof freshBalance.holdings)[number] }[] = []
 
     for (const s of buySignals) {
       const alreadyHeld = freshBalance.holdings.find(h => h.code === s.code && h.quantity > 0)
       if (alreadyHeld) {
+        // 에프터마켓에서는 추가매수(불타기/물타기) 안 함
+        if (afterMarket) {
+          console.log(`[스캘핑] ${s.name}(${s.score}점) 에프터마켓 — 추가매수 스킵`)
+          continue
+        }
         // 추가 매수 판단: 불타기 / 물타기
         const totalInvested = alreadyHeld.avgPrice * alreadyHeld.quantity
         const maxPerStock = config.maxPerTrade * 2 // 1종목 최대 건당금액의 2배
@@ -248,10 +273,10 @@ export const executeScalpingCycle = async (
     }
 
     if (positionSlots <= 0 && newBuyTargets.length > 0) {
-      console.log(`[스캘핑] 포지션 슬롯 없음 (${currentPositionCount}/${config.maxPositions} 보유 중) — 신규 매수 불가`)
+      console.log(`[스캘핑] 포지션 슬롯 없음 (${currentPositionCount}/${effectiveMaxPositions} 보유 중) — 신규 매수 불가`)
     }
-    if (freshCash < config.maxPerTrade * 0.3) {
-      console.log(`[스캘핑] 현금 부족 (${freshCash.toLocaleString()}원 < 최소 ${Math.round(config.maxPerTrade * 0.3).toLocaleString()}원)`)
+    if (freshCash < effectiveMaxPerTrade * 0.3) {
+      console.log(`[스캘핑] 현금 부족 (${freshCash.toLocaleString()}원 < 최소 ${Math.round(effectiveMaxPerTrade * 0.3).toLocaleString()}원)`)
     }
 
     // 신규 종목 매수
@@ -261,7 +286,7 @@ export const executeScalpingCycle = async (
         break
       }
       if (positionSlots <= 0) break
-      if (freshCash < config.maxPerTrade * 0.3) break
+      if (freshCash < effectiveMaxPerTrade * 0.3) break
 
       // ETF/레버리지/인버스 매수 차단
       if (isETF(target.name)) {
@@ -269,7 +294,8 @@ export const executeScalpingCycle = async (
         continue
       }
 
-      const investAmount = Math.min(config.maxPerTrade, freshCash / Math.max(positionSlots, 1))
+      // 투자금 배분: maxPerTrade 우선, 단 남은 현금의 50%는 넘지 않도록
+      const investAmount = Math.min(effectiveMaxPerTrade, freshCash * 0.5)
       const quantity = Math.floor(investAmount / target.price)
       if (quantity <= 0) {
         console.log(`[스캘핑] ${target.name} 수량 0 — 가격 ${target.price.toLocaleString()}원 > 투자금 ${investAmount.toLocaleString()}원`)
@@ -342,15 +368,29 @@ export const executeScalpingCycle = async (
 
 // ─── 매수/매도 실행 헬퍼 ────────────────────────────
 
+/** NXT 재시도 가능한 에러인지 판별 (KRX 시간외단일가 불가 → NXT로 재시도) */
+const isNxtRetryable = (errorMsg: string): boolean =>
+  errorMsg.includes('NXT거래종목') || errorMsg.includes('시간외단일가 주문불가')
+
+/** 현재 NXT 애프터마켓 시간인지 (15:30~20:00) */
+const isNxtAfterMarket = (): boolean => {
+  const now = new Date()
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000)
+  const time = kst.getUTCHours() * 100 + kst.getUTCMinutes()
+  return time >= 1530 && time <= 2000
+}
+
 const executeBuy = async (
   code: string, name: string, quantity: number, price: number,
   reason: string, config: ScalpingConfig
 ): Promise<TradeLogEntry | null> => {
   const orderType = getOrderType()
+  const needsPrice = orderType === 'after-hours' || orderType === 'after-close'
+
   try {
     const result = await placeKisOrder({
       side: 'buy', code, quantity,
-      price: (orderType === 'after-hours') ? price : undefined,
+      price: needsPrice ? price : undefined,
       orderType: orderType as 'market' | 'limit' | 'pre-market' | 'after-close' | 'after-hours',
     }, config.mode)
 
@@ -367,6 +407,45 @@ const executeBuy = async (
     return log
   } catch (error) {
     const msg = error instanceof Error ? error.message : '주문 오류'
+
+    // KRX 시간외단일가 불가 → NXT 애프터마켓으로 재시도 (실전만, 모의투자 NXT 불가)
+    if (isNxtRetryable(msg) && isNxtAfterMarket() && config.mode === 'real') {
+      console.log(`[스캘핑] ${name} KRX 시간외 불가 → NXT 애프터마켓 지정가로 재시도`)
+      try {
+        const nxtResult = await placeKisOrder({
+          side: 'buy', code, quantity,
+          price,
+          orderType: 'limit',
+          exchange: 'NXT',
+        }, config.mode)
+
+        dailyOrderCount++
+        const log: TradeLogEntry = {
+          id: `${Date.now()}-${code}-buy-nxt`,
+          timestamp: new Date().toISOString(),
+          strategy: '자율 스캘핑',
+          action: 'BUY', code, name, quantity, price,
+          reason: reason + ' (NXT)',
+          result: nxtResult.status === 'executed' ? 'success' : 'failed',
+          message: `[NXT] ${nxtResult.message}`,
+        }
+        tradeLogs.push(log)
+        return log
+      } catch (nxtErr) {
+        const nxtMsg = nxtErr instanceof Error ? nxtErr.message : 'NXT 주문 오류'
+        console.log(`[스캘핑] ${name} NXT도 실패: ${nxtMsg}`)
+        const log: TradeLogEntry = {
+          id: `${Date.now()}-${code}-buy-nxt-fail`,
+          timestamp: new Date().toISOString(),
+          strategy: '자율 스캘핑',
+          action: 'BUY', code, name, quantity, price, reason,
+          result: 'failed', message: `KRX: ${msg} → NXT: ${nxtMsg}`,
+        }
+        tradeLogs.push(log)
+        return log
+      }
+    }
+
     const log: TradeLogEntry = {
       id: `${Date.now()}-${code}-buy-fail`,
       timestamp: new Date().toISOString(),
@@ -384,10 +463,12 @@ const executeSell = async (
   reason: string, config: ScalpingConfig
 ): Promise<TradeLogEntry | null> => {
   const orderType = getOrderType()
+  const needsPrice = orderType === 'after-hours' || orderType === 'after-close'
+
   try {
     const result = await placeKisOrder({
       side: 'sell', code, quantity,
-      price: (orderType === 'after-hours') ? price : undefined,
+      price: needsPrice ? price : undefined,
       orderType: orderType as 'market' | 'limit' | 'pre-market' | 'after-close' | 'after-hours',
     }, config.mode)
 
@@ -404,6 +485,44 @@ const executeSell = async (
     return log
   } catch (error) {
     const msg = error instanceof Error ? error.message : '주문 오류'
+
+    // KRX 시간외단일가 불가 → NXT 애프터마켓으로 재시도
+    if (isNxtRetryable(msg) && isNxtAfterMarket() && config.mode === 'real') {
+      console.log(`[스캘핑] ${name} 매도 KRX 불가 → NXT 재시도`)
+      try {
+        const nxtResult = await placeKisOrder({
+          side: 'sell', code, quantity,
+          price,
+          orderType: 'limit',
+          exchange: 'NXT',
+        }, config.mode)
+
+        dailyOrderCount++
+        const log: TradeLogEntry = {
+          id: `${Date.now()}-${code}-sell-nxt`,
+          timestamp: new Date().toISOString(),
+          strategy: '자율 스캘핑',
+          action: 'SELL', code, name, quantity, price,
+          reason: reason + ' (NXT)',
+          result: nxtResult.status === 'executed' ? 'success' : 'failed',
+          message: `[NXT] ${nxtResult.message}`,
+        }
+        tradeLogs.push(log)
+        return log
+      } catch (nxtErr) {
+        const nxtMsg = nxtErr instanceof Error ? nxtErr.message : 'NXT 주문 오류'
+        const log: TradeLogEntry = {
+          id: `${Date.now()}-${code}-sell-nxt-fail`,
+          timestamp: new Date().toISOString(),
+          strategy: '자율 스캘핑',
+          action: 'SELL', code, name, quantity, price, reason,
+          result: 'failed', message: `KRX: ${msg} → NXT: ${nxtMsg}`,
+        }
+        tradeLogs.push(log)
+        return log
+      }
+    }
+
     const log: TradeLogEntry = {
       id: `${Date.now()}-${code}-sell-fail`,
       timestamp: new Date().toISOString(),

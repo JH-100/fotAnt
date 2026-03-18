@@ -1,7 +1,7 @@
 'use client'
 
-// 주문 폼 — 실전/모의 모드 + 비밀번호 보호
-import { useState, useEffect, useRef } from 'react'
+// 주문 폼 — 실전/모의 모드 + 비밀번호 보호 + 한국어 종목 검색
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import useTrade from '@/hooks/use-trade'
 import useTradingStore from '@/store/trading-store'
@@ -58,27 +58,81 @@ const OrderForm = ({ mode = 'real' }: { mode?: 'real' | 'mock' }) => {
     }
   }, [trade.isSuccess, trade.isError, trade])
 
-  // 검색 결과
+  // 서버 검색 결과 (한국어 이름 + 코드 + 초성 검색 지원)
+  const [serverResults, setServerResults] = useState<{ code: string; name: string; market: string }[]>([])
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(null)
+
+  // 디바운스 서버 검색
+  const doSearch = useCallback((q: string) => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/stock-search?q=${encodeURIComponent(q)}`)
+        if (res.ok) setServerResults(await res.json())
+      } catch { /* ignore */ }
+    }, q ? 200 : 0) // 쿼리 있으면 200ms 디바운스
+  }, [])
+
+  useEffect(() => {
+    if (showSearch) doSearch(searchQuery)
+  }, [searchQuery, showSearch, doSearch])
+
+  // 검색 결과: 서버 결과 + 로컬 시세 데이터 병합
   const searchResults = (() => {
-    const items: { code: string; name: string; price: number }[] = []
-    stocks?.forEach((s) => items.push({ code: s.code, name: s.name, price: s.price }))
-    ranking?.items.forEach((r) => {
-      if (!items.find((i) => i.code === r.code)) {
-        items.push({ code: r.code, name: r.name, price: r.price })
-      }
-    })
-    if (!searchQuery) return items.slice(0, 10)
-    const q = searchQuery.toLowerCase()
-    return items.filter(
-      (i) => i.name.toLowerCase().includes(q) || i.code.includes(q)
-    ).slice(0, 10)
+    // 로컬 시세 데이터 (가격 포함)
+    const priceMap: Record<string, number> = {}
+    stocks?.forEach((s) => { priceMap[s.code] = s.price })
+    ranking?.items.forEach((r) => { priceMap[r.code] = r.price })
+
+    // 서버 결과에 가격 붙이기
+    const results = serverResults.map((s) => ({
+      code: s.code,
+      name: s.name,
+      price: priceMap[s.code] ?? 0,
+      market: s.market,
+    }))
+
+    // 서버 결과에 없는 로컬 시세 종목 추가 (가격 있는 것 우선)
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase()
+      const serverCodes = new Set(results.map(r => r.code))
+      const localItems: typeof results = []
+      stocks?.forEach((s) => {
+        if (!serverCodes.has(s.code) && (s.name.toLowerCase().includes(q) || s.code.includes(q))) {
+          localItems.push({ code: s.code, name: s.name, price: s.price, market: '' })
+        }
+      })
+      results.push(...localItems)
+    }
+
+    return results.slice(0, 15)
   })()
+
+  const [watchlistMsg, setWatchlistMsg] = useState('')
 
   const selectStock = (stockCode: string, name: string) => {
     setCode(stockCode)
     setStockName(name)
     setSearchQuery('')
     setShowSearch(false)
+  }
+
+  // 스캘핑 워치리스트에 추가
+  const addToScalpingWatch = async () => {
+    if (!code || !stockName) return
+    try {
+      const res = await fetch('/api/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add', code, name: stockName }),
+      })
+      const data = await res.json()
+      setWatchlistMsg(`✓ ${stockName} 스캘핑 목록 추가 (총 ${data.total}종목)`)
+      setTimeout(() => setWatchlistMsg(''), 3000)
+    } catch {
+      setWatchlistMsg('추가 실패')
+      setTimeout(() => setWatchlistMsg(''), 3000)
+    }
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -205,15 +259,42 @@ const OrderForm = ({ mode = 'real' }: { mode?: 'real' | 'mock' }) => {
                       onClick={() => selectStock(item.code, item.name)}
                       className="flex w-full items-center justify-between px-4 py-2.5 text-left transition-colors hover:bg-white/[0.06]"
                     >
-                      <div>
+                      <div className="flex items-center gap-2">
                         <span className="text-sm font-medium">{item.name}</span>
-                        <span className="ml-2 font-mono text-[10px] text-muted-foreground">{item.code}</span>
+                        <span className="font-mono text-[10px] text-muted-foreground">{item.code}</span>
+                        {'market' in item && item.market && (
+                          <span className={`rounded px-1 py-0.5 text-[9px] ${
+                            item.market === 'KOSPI' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'
+                          }`}>
+                            {item.market}
+                          </span>
+                        )}
                       </div>
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {new Intl.NumberFormat('ko-KR').format(item.price)}원
-                      </span>
+                      {item.price > 0 ? (
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {new Intl.NumberFormat('ko-KR').format(item.price)}원
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground/50">시세 없음</span>
+                      )}
                     </button>
                   ))
+                )}
+              </div>
+            )}
+
+            {/* 종목 선택 시 — 스캘핑 워치리스트 추가 버튼 */}
+            {code && !showSearch && (
+              <div className="mt-1.5 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={addToScalpingWatch}
+                  className="rounded-lg bg-orange-500/10 px-2.5 py-1 text-[10px] text-orange-400 transition-colors hover:bg-orange-500/20"
+                >
+                  + 스캘핑 목록에 추가
+                </button>
+                {watchlistMsg && (
+                  <span className="text-[10px] text-emerald-400">{watchlistMsg}</span>
                 )}
               </div>
             )}
