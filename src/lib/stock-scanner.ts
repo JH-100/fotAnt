@@ -12,22 +12,28 @@ import {
   getRSISignal, getMACDSignal, getMASignal, getVolumeSignal,
 } from './indicators'
 import type { MinutePrice, DailyPrice } from '@/types/kis'
-import * as fs from 'fs'
-import * as path from 'path'
 
-// ─── 커스텀 워치리스트 파일 저장 ───
-const WATCHLIST_FILE = path.join(process.cwd(), '.custom-watchlist.json')
+// ─── 커스텀 워치리스트 파일 저장 (서버 전용, 동적 require) ───
+const getWatchlistPath = () => {
+  if (typeof window !== 'undefined') return ''
+  const path = require('path') as typeof import('path')
+  return path.join(process.cwd(), '.custom-watchlist.json')
+}
 
 const loadCustomWatchList = (): { code: string; name: string }[] => {
+  if (typeof window !== 'undefined') return []
   try {
-    const raw = fs.readFileSync(WATCHLIST_FILE, 'utf-8')
+    const fs = require('fs') as typeof import('fs')
+    const raw = fs.readFileSync(getWatchlistPath(), 'utf-8')
     return JSON.parse(raw) ?? []
   } catch { return [] }
 }
 
 const saveCustomWatchList = (list: { code: string; name: string }[]) => {
+  if (typeof window !== 'undefined') return
   try {
-    fs.writeFileSync(WATCHLIST_FILE, JSON.stringify(list), 'utf-8')
+    const fs = require('fs') as typeof import('fs')
+    fs.writeFileSync(getWatchlistPath(), JSON.stringify(list), 'utf-8')
   } catch (err) {
     console.log(`[스캐너] 워치리스트 저장 실패: ${err}`)
   }

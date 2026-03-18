@@ -3,6 +3,7 @@
 // 자율 스캘핑 제어판
 import AutoTradeControl from '@/components/auto-trade/AutoTradeControl'
 import SafetyConfig from '@/components/auto-trade/SafetyConfig'
+import Holdings from '@/components/auto-trade/Holdings'
 import ScanResults from '@/components/auto-trade/ScanResults'
 import TradeLog from '@/components/auto-trade/TradeLog'
 
@@ -27,6 +28,9 @@ const AutoTradePage = () => {
           <SafetyConfig />
         </div>
       </div>
+
+      {/* 보유종목 */}
+      <Holdings />
 
       {/* 스캔 결과 + 매매 로그 */}
       <div className="grid gap-6 lg:grid-cols-2">

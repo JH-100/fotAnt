@@ -5,6 +5,7 @@ import {
   executeScalpingCycle, isMarketOpen, getScalpingLogs, getLastScan, getDailyStats,
   restoreLogs, restoreStats,
 } from './scalping-engine'
+import { getKisBalance } from './kis-api'
 import type { ScalpingConfig } from './scalping-engine'
 import type { TradeLogEntry } from './strategies/types'
 
@@ -96,6 +97,15 @@ const runCycle = async () => {
 
     console.log(`[스캘핑] 완료 — 스캔 ${result.scan.length}종목 (매수신호 ${buySignals}, 최소점수 ${state.config.minScore}) / 매수 ${buyCount}건, 매도 ${sellCount}건${failCount > 0 ? `, 실패 ${failCount}건` : ''}`)
 
+    // 보유종목 캐시 업데이트
+    try {
+      const balance = await getKisBalance(state.config.mode)
+      updateHoldingsCache(balance.holdings.filter(h => h.quantity > 0).map(h => ({
+        ...h,
+        totalInvested: h.avgPrice * h.quantity,
+      })))
+    } catch { /* 잔고 조회 실패 무시 */ }
+
     if (buySignals > 0 && buyCount === 0 && sellCount === 0) {
       const topBuy = result.scan.filter(s => s.signal === 'BUY')[0]
       console.log(`[스캘핑] 매수 미실행 — 상위 종목: ${topBuy?.name}(${topBuy?.score}점) / 최소점수: ${state.config.minScore}`)
@@ -155,18 +165,41 @@ export const stopScheduler = () => {
 }
 
 /** 스케줄러 상태 조회 */
-export const getSchedulerStatus = () => ({
-  isRunning: state.isRunning,
-  config: state.config,
-  startedAt: state.startedAt,
-  lastError: state.lastError,
-  lastCycleAt: state.lastCycleAt,
-  cycleCount: state.cycleCount,
-  logs: getScalpingLogs(),
-  scan: getLastScan().slice(0, 10),
-  marketOpen: isMarketOpen(),
-  dailyStats: getDailyStats(),
-})
+export const getSchedulerStatus = () => {
+  // 잔고 조회는 비동기이므로 별도 holdings 필드에 마지막 캐시 제공
+  return {
+    isRunning: state.isRunning,
+    config: state.config,
+    startedAt: state.startedAt,
+    lastError: state.lastError,
+    lastCycleAt: state.lastCycleAt,
+    cycleCount: state.cycleCount,
+    logs: getScalpingLogs(),
+    scan: getLastScan().slice(0, 10),
+    marketOpen: isMarketOpen(),
+    dailyStats: getDailyStats(),
+    holdings: lastHoldings,
+  }
+}
+
+// ─── 보유종목 캐시 (마지막 잔고 조회 결과) ──────────
+interface HoldingInfo {
+  code: string
+  name: string
+  quantity: number
+  avgPrice: number
+  currentPrice: number
+  profitLoss: number
+  profitLossPercent: number
+  evalAmount: number
+  totalInvested: number  // 매입금액 (평단가 × 수량)
+}
+let lastHoldings: HoldingInfo[] = []
+
+/** 보유종목 캐시 업데이트 (스캘핑 사이클 후 호출) */
+export const updateHoldingsCache = (holdings: HoldingInfo[]) => {
+  lastHoldings = holdings
+}
 
 /** 설정 업데이트 (실행 중에도 가능) */
 export const updateSchedulerConfig = (config: Partial<ScalpingConfig>) => {

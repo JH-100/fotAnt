@@ -119,11 +119,12 @@ const getReasonWinRate = (reasons: string[]): number | null => {
 
 export const getReasonPerformance = () => ({ ...reasonPerformance })
 
-// ─── 자동 손익 리포트 (파일 기반) ────────────────────
-import * as fs from 'fs'
-import * as path from 'path'
-
-const REPORT_DIR = path.join(process.cwd(), '.trading-reports')
+// ─── 자동 손익 리포트 (파일 기반, 서버 전용) ─────────
+const getReportDir = () => {
+  if (typeof window !== 'undefined') return ''
+  const path = require('path') as typeof import('path')
+  return path.join(process.cwd(), '.trading-reports')
+}
 
 interface DailyReport {
   date: string
@@ -185,14 +186,18 @@ export const generateDailyReport = (): DailyReport => {
     topReasons,
   }
 
-  // 파일로 저장
-  try {
-    if (!fs.existsSync(REPORT_DIR)) fs.mkdirSync(REPORT_DIR, { recursive: true })
-    const filePath = path.join(REPORT_DIR, `${today}.json`)
-    fs.writeFileSync(filePath, JSON.stringify(report, null, 2), 'utf-8')
-    console.log(`[리포트] 일일 리포트 저장: ${filePath}`)
-  } catch (err) {
-    console.log(`[리포트] 저장 실패: ${err}`)
+  // 파일로 저장 (서버 전용)
+  if (typeof window === 'undefined') {
+    try {
+      const fs = require('fs') as typeof import('fs')
+      const reportDir = getReportDir()
+      if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true })
+      const filePath = require('path').join(reportDir, `${today}.json`)
+      fs.writeFileSync(filePath, JSON.stringify(report, null, 2), 'utf-8')
+      console.log(`[리포트] 일일 리포트 저장: ${filePath}`)
+    } catch (err) {
+      console.log(`[리포트] 저장 실패: ${err}`)
+    }
   }
 
   return report
@@ -201,15 +206,19 @@ export const generateDailyReport = (): DailyReport => {
 /** 주간 리포트 조회 (최근 7일) */
 export const getWeeklyReport = (): { days: DailyReport[]; summary: { totalPnL: number; avgWinRate: number; totalOrders: number } } => {
   const days: DailyReport[] = []
+  if (typeof window !== 'undefined') return { days: [], summary: { totalPnL: 0, avgWinRate: 0, totalOrders: 0 } }
   try {
-    if (!fs.existsSync(REPORT_DIR)) return { days: [], summary: { totalPnL: 0, avgWinRate: 0, totalOrders: 0 } }
-    const files = fs.readdirSync(REPORT_DIR)
-      .filter(f => f.endsWith('.json'))
+    const fs = require('fs') as typeof import('fs')
+    const pathMod = require('path') as typeof import('path')
+    const reportDir = getReportDir()
+    if (!fs.existsSync(reportDir)) return { days: [], summary: { totalPnL: 0, avgWinRate: 0, totalOrders: 0 } }
+    const files = fs.readdirSync(reportDir)
+      .filter((f: string) => f.endsWith('.json'))
       .sort()
-      .slice(-7) // 최근 7일
+      .slice(-7)
 
     for (const file of files) {
-      const raw = fs.readFileSync(path.join(REPORT_DIR, file), 'utf-8')
+      const raw = fs.readFileSync(pathMod.join(reportDir, file), 'utf-8')
       days.push(JSON.parse(raw))
     }
   } catch { /* 무시 */ }
