@@ -119,15 +119,121 @@ const getReasonWinRate = (reasons: string[]): number | null => {
 
 export const getReasonPerformance = () => ({ ...reasonPerformance })
 
+// ─── 자동 손익 리포트 (파일 기반) ────────────────────
+import * as fs from 'fs'
+import * as path from 'path'
+
+const REPORT_DIR = path.join(process.cwd(), '.trading-reports')
+
+interface DailyReport {
+  date: string
+  totalOrders: number
+  buyCount: number
+  sellCount: number
+  wins: number
+  losses: number
+  totalPnL: number
+  winRate: number
+  bestTrade: { code: string; name: string; pnl: number } | null
+  worstTrade: { code: string; name: string; pnl: number } | null
+  topReasons: { reason: string; wins: number; losses: number; winRate: number }[]
+}
+
+/** 일일 리포트 생성 및 저장 */
+export const generateDailyReport = (): DailyReport => {
+  const today = new Date().toISOString().split('T')[0] ?? ''
+  const todayLogs = tradeLogs.filter(l => l.timestamp.startsWith(today))
+
+  const buys = todayLogs.filter(l => l.action === 'BUY' && l.result === 'success')
+  const sells = todayLogs.filter(l => l.action === 'SELL' && l.result === 'success')
+
+  // 매도 결과에서 손익 추정 (reason에서 % 추출)
+  let wins = 0, losses = 0, totalPnL = 0
+  let bestTrade: DailyReport['bestTrade'] = null
+  let worstTrade: DailyReport['worstTrade'] = null
+
+  for (const sell of sells) {
+    const meta = positionMetas[sell.code]
+    const pnl = meta ? (sell.price - meta.buyPrice) * sell.quantity : 0
+    totalPnL += pnl
+    if (pnl > 0) wins++; else losses++
+    if (!bestTrade || pnl > bestTrade.pnl) bestTrade = { code: sell.code, name: sell.name, pnl }
+    if (!worstTrade || pnl < worstTrade.pnl) worstTrade = { code: sell.code, name: sell.name, pnl }
+  }
+
+  // reason별 성과 요약 (상위 10개)
+  const topReasons = Object.entries(reasonPerformance)
+    .map(([reason, stat]) => ({
+      reason,
+      wins: stat.wins,
+      losses: stat.losses,
+      winRate: (stat.wins + stat.losses) > 0 ? stat.wins / (stat.wins + stat.losses) : 0,
+    }))
+    .filter(r => r.wins + r.losses >= 2)
+    .sort((a, b) => (b.wins + b.losses) - (a.wins + a.losses))
+    .slice(0, 10)
+
+  const report: DailyReport = {
+    date: today,
+    totalOrders: todayLogs.filter(l => l.result === 'success').length,
+    buyCount: buys.length,
+    sellCount: sells.length,
+    wins, losses,
+    totalPnL: Math.round(totalPnL),
+    winRate: (wins + losses) > 0 ? Math.round((wins / (wins + losses)) * 100) : 0,
+    bestTrade, worstTrade,
+    topReasons,
+  }
+
+  // 파일로 저장
+  try {
+    if (!fs.existsSync(REPORT_DIR)) fs.mkdirSync(REPORT_DIR, { recursive: true })
+    const filePath = path.join(REPORT_DIR, `${today}.json`)
+    fs.writeFileSync(filePath, JSON.stringify(report, null, 2), 'utf-8')
+    console.log(`[리포트] 일일 리포트 저장: ${filePath}`)
+  } catch (err) {
+    console.log(`[리포트] 저장 실패: ${err}`)
+  }
+
+  return report
+}
+
+/** 주간 리포트 조회 (최근 7일) */
+export const getWeeklyReport = (): { days: DailyReport[]; summary: { totalPnL: number; avgWinRate: number; totalOrders: number } } => {
+  const days: DailyReport[] = []
+  try {
+    if (!fs.existsSync(REPORT_DIR)) return { days: [], summary: { totalPnL: 0, avgWinRate: 0, totalOrders: 0 } }
+    const files = fs.readdirSync(REPORT_DIR)
+      .filter(f => f.endsWith('.json'))
+      .sort()
+      .slice(-7) // 최근 7일
+
+    for (const file of files) {
+      const raw = fs.readFileSync(path.join(REPORT_DIR, file), 'utf-8')
+      days.push(JSON.parse(raw))
+    }
+  } catch { /* 무시 */ }
+
+  const totalPnL = days.reduce((s, d) => s + d.totalPnL, 0)
+  const totalOrders = days.reduce((s, d) => s + d.totalOrders, 0)
+  const avgWinRate = days.length > 0
+    ? Math.round(days.reduce((s, d) => s + d.winRate, 0) / days.length)
+    : 0
+
+  return { days, summary: { totalPnL, avgWinRate, totalOrders } }
+}
+
 const resetDailyIfNeeded = () => {
   const today = new Date().toISOString().split('T')[0] ?? ''
   if (today !== lastResetDate) {
+    // ★ 전일 리포트 자동 생성 (리셋 전에)
+    if (lastResetDate && tradeLogs.length > 0) {
+      try { generateDailyReport() } catch (e) { console.log(`[리포트] 전일 리포트 생성 실패: ${e}`) }
+    }
     dailyOrderCount = 0
     dailyPnL = 0
     lastResetDate = today
-    // 전일 positionMetas 중 현재 미보유 종목 정리 (보유 중인 건 유지)
     for (const code of Object.keys(positionMetas)) {
-      // 일일 리셋 시 오래된 메타 정리 — 보유 확인은 잔고 조회 후에 하므로 여기선 전부 리셋
       delete positionMetas[code]
     }
   }

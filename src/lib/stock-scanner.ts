@@ -1,5 +1,5 @@
 // 자율 종목 스캐너 — KIS 거래량순위 + AI추천 + 분봉/일봉 지표 분석
-import { getKisMinutePrices, getKisVolumeRank, getKisDailyPrices, aggregateMinuteBars } from './kis-api'
+import { getKisMinutePrices, getKisVolumeRank, getKisDailyPrices, aggregateMinuteBars, getKisInvestorTrading } from './kis-api'
 import type { TradingMode } from './kis-api'
 import {
   calcRSI, calcMACD, calcBollingerBands,
@@ -8,6 +8,7 @@ import {
   calcSMA, calcATR,
   calcWilliamsR, calcKeltnerChannel, detectSqueeze,
   calcVolumeProfile, calcSpreadCost,
+  detectPricePattern, calcMultiTimeframeAlignment,
   getRSISignal, getMACDSignal, getMASignal, getVolumeSignal,
 } from './indicators'
 import type { MinutePrice, DailyPrice } from '@/types/kis'
@@ -54,6 +55,10 @@ export interface ScanResult {
   squeezeRelease: 'up' | 'down' | 'neutral' // 스퀴즈 해소 방향
   vpPosition: number       // Volume Profile 위치 (-1: 저평가, +1: 고평가)
   spreadCost: number       // 호가 스프레드 비용 (%)
+  pattern: string          // 가격 패턴 (double-bottom, bull-flag 등)
+  mtfDirection: 'bullish' | 'bearish' | 'mixed' // 멀티 타임프레임 방향
+  foreignNetBuy: number    // 외국인 순매수
+  institutionNetBuy: number // 기관 순매수
   takeProfitPercent: number
   stopLossPercent: number
   score: number            // 종합 점수 (-100 ~ +100)
@@ -196,10 +201,50 @@ const analyzeWithMinuteBars = async (
   if (prev3 <= prev7 && latest3 > latest7) { score += 12; reasons.push('단기이평 골든(3/7)') }
   else if (prev3 >= prev7 && latest3 < latest7) { score -= 10; reasons.push('단기이평 데드(3/7)') }
 
+  // ★ 가격 패턴 인식 (쌍바닥, 불플래그, 역헤숄)
+  const pattern = detectPricePattern(sorted5)
+  if (pattern.pattern === 'double-bottom') {
+    score += Math.round(15 * pattern.confidence); reasons.push(`패턴: ${pattern.description}`)
+  } else if (pattern.pattern === 'bull-flag') {
+    score += Math.round(12 * pattern.confidence); reasons.push(`패턴: ${pattern.description}`)
+  } else if (pattern.pattern === 'inv-head-shoulder') {
+    score += Math.round(18 * pattern.confidence); reasons.push(`패턴: ${pattern.description}`)
+  }
+
+  // ★ 멀티 타임프레임 정렬 (1분봉 + 5분봉 + 일봉)
+  let dailyCloses: number[] = []
+  try {
+    const dailyData = await getKisDailyPrices(code, 10, mode)
+    dailyCloses = dailyData.map(d => d.close)
+  } catch { /* 일봉 실패 시 무시 */ }
+  const mtf = calcMultiTimeframeAlignment(sorted1, sorted5, dailyCloses)
+  if (mtf.aligned && mtf.direction === 'bullish') {
+    score += 12; reasons.push('멀티TF 상승정렬')
+  } else if (mtf.aligned && mtf.direction === 'bearish') {
+    score -= 10; reasons.push('멀티TF 하락정렬')
+  }
+
+  // ★ 외국인/기관 수급 (API 조회 — 실패해도 무시)
+  let foreignNet = 0, instNet = 0
+  try {
+    const investor = await getKisInvestorTrading(code, mode)
+    foreignNet = investor.foreignNetBuy
+    instNet = investor.institutionNetBuy
+    // 외국인+기관 동반 순매수 → 강한 가점
+    if (foreignNet > 0 && instNet > 0) {
+      score += 15; reasons.push(`외국인+기관 동반매수`)
+    } else if (foreignNet > 0) {
+      score += 8; reasons.push(`외국인 순매수`)
+    } else if (instNet > 0) {
+      score += 6; reasons.push(`기관 순매수`)
+    } else if (foreignNet < 0 && instNet < 0) {
+      score -= 10; reasons.push(`외국인+기관 동반매도`)
+    }
+  } catch { /* 수급 조회 실패 무시 */ }
+
   // 익절/손절 — 스프레드 비용 반영
   let takeProfitPercent = Math.max(0.5, Math.min(4, atrPercent * 3))
   let stopLossPercent = Math.max(0.3, Math.min(2.5, atrPercent * 2))
-  // 스프레드 비용만큼 최소 익절목표를 높임
   takeProfitPercent = Math.max(takeProfitPercent, spreadCost * 3)
   if (score >= 50) { takeProfitPercent *= 1.3 }
   else if (score < 30) { takeProfitPercent *= 0.7; stopLossPercent *= 0.8 }
@@ -220,6 +265,8 @@ const analyzeWithMinuteBars = async (
     williamsR, squeeze: squeeze.isSqueeze,
     squeezeRelease: squeeze.squeezeReleased ? squeeze.direction : 'neutral',
     vpPosition: vp.position, spreadCost,
+    pattern: pattern.pattern, mtfDirection: mtf.direction,
+    foreignNetBuy: foreignNet, institutionNetBuy: instNet,
     takeProfitPercent, stopLossPercent,
     score, signal, reasons, source: 'minute',
   }
@@ -329,6 +376,8 @@ const analyzeWithDailyBars = async (
     atr, atrPercent,
     williamsR: -50, squeeze: false, squeezeRelease: 'neutral' as const,
     vpPosition: 0, spreadCost: calcSpreadCost(price),
+    pattern: 'none', mtfDirection: 'mixed' as const,
+    foreignNetBuy: 0, institutionNetBuy: 0,
     takeProfitPercent, stopLossPercent,
     score, signal, reasons, source: 'daily',
   }

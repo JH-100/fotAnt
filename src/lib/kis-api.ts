@@ -478,6 +478,64 @@ export const getKisVolumeRank = async (mode?: TradingMode): Promise<VolumeRankIt
   }))
 }
 
+// ─── 투자자별 매매동향 조회 (외국인/기관 수급) ────────
+
+export interface InvestorTrading {
+  foreignNetBuy: number   // 외국인 순매수량
+  institutionNetBuy: number // 기관 순매수량
+  individualNetBuy: number  // 개인 순매수량
+  foreignAcc: number      // 외국인 누적 순매수
+  institutionAcc: number  // 기관 누적 순매수
+}
+
+/** 종목별 투자자 매매동향 (당일) — FHKST01010900 */
+export const getKisInvestorTrading = async (code: string, mode?: TradingMode): Promise<InvestorTrading> => {
+  const m = mode ?? defaultMode()
+  const headers = await getHeaders(m, 'FHKST01010900')
+  const cfg = getModeConfig(m)
+
+  const params = new URLSearchParams({
+    FID_COND_MRKT_DIV_CODE: 'J',
+    FID_INPUT_ISCD: code,
+  })
+
+  try {
+    const res = await fetch(
+      `${cfg.baseUrl}/uapi/domestic-stock/v1/quotations/inquire-investor?${params.toString()}`,
+      { headers }
+    )
+    if (!res.ok) return { foreignNetBuy: 0, institutionNetBuy: 0, individualNetBuy: 0, foreignAcc: 0, institutionAcc: 0 }
+    const data = await res.json()
+    if (data.rt_cd !== '0') return { foreignNetBuy: 0, institutionNetBuy: 0, individualNetBuy: 0, foreignAcc: 0, institutionAcc: 0 }
+
+    // output: 시간대별 투자자 매매 데이터 (최신부터)
+    const items = data.output ?? []
+    let foreignBuy = 0, foreignSell = 0, instBuy = 0, instSell = 0, indivBuy = 0, indivSell = 0
+
+    for (const item of items) {
+      foreignBuy += parseInt(item.frgn_ntby_qty ?? '0', 10)  // 외국인
+      instBuy += parseInt(item.orgn_ntby_qty ?? '0', 10)      // 기관
+      indivBuy += parseInt(item.prsn_ntby_qty ?? '0', 10)     // 개인
+    }
+
+    // 최근 데이터(첫 행)를 순매수로 사용
+    const latest = items[0] ?? {}
+    const foreignNet = parseInt(latest.frgn_ntby_qty ?? '0', 10)
+    const instNet = parseInt(latest.orgn_ntby_qty ?? '0', 10)
+    const indivNet = parseInt(latest.prsn_ntby_qty ?? '0', 10)
+
+    return {
+      foreignNetBuy: foreignNet,
+      institutionNetBuy: instNet,
+      individualNetBuy: indivNet,
+      foreignAcc: foreignBuy,
+      institutionAcc: instBuy,
+    }
+  } catch {
+    return { foreignNetBuy: 0, institutionNetBuy: 0, individualNetBuy: 0, foreignAcc: 0, institutionAcc: 0 }
+  }
+}
+
 // ─── 당일 분봉 조회 (스캘핑 단기지표용) ──────────────
 
 /** KIS 당일 분봉 조회 — 1분봉 데이터를 가져와서 지정 간격으로 집계 */

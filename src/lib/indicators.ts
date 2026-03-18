@@ -399,6 +399,141 @@ export const calcSpreadCost = (price: number): number => {
 }
 
 // ════════════════════════════════════════════════════
+// 가격 패턴 인식 (쌍바닥, 역헤드앤숄더, 깃발)
+// ════════════════════════════════════════════════════
+
+export type PatternType = 'double-bottom' | 'inv-head-shoulder' | 'bull-flag' | 'none'
+
+/** 가격 패턴 감지 — 분봉/일봉 공용 */
+export const detectPricePattern = (bars: MinutePrice[]): {
+  pattern: PatternType
+  confidence: number  // 0~1
+  description: string
+} => {
+  if (bars.length < 20) return { pattern: 'none', confidence: 0, description: '' }
+  const sorted = [...bars].sort((a, b) => a.time.localeCompare(b.time))
+  const closes = sorted.map(b => b.close)
+  const n = closes.length
+
+  // 1) 쌍바닥 (Double Bottom) — W자 패턴
+  // 조건: 두 개의 근접한 저점(±1%) + 사이에 중간 고점
+  const recentCloses = closes.slice(-20)
+  const minPrice = Math.min(...recentCloses)
+  const maxPrice = Math.max(...recentCloses)
+  const range = maxPrice - minPrice
+  if (range > 0) {
+    const threshold = minPrice * 1.01  // 저점 ± 1%
+    const lows: number[] = []
+    for (let i = 1; i < recentCloses.length - 1; i++) {
+      if (recentCloses[i]! <= threshold &&
+          recentCloses[i]! <= recentCloses[i - 1]! &&
+          recentCloses[i]! <= recentCloses[i + 1]!) {
+        lows.push(i)
+      }
+    }
+    if (lows.length >= 2) {
+      const [first, second] = [lows[0]!, lows[lows.length - 1]!]
+      const gap = second - first
+      if (gap >= 4 && gap <= 15) {
+        const middleMax = Math.max(...recentCloses.slice(first, second + 1))
+        const necklineBreak = recentCloses[recentCloses.length - 1]! > middleMax * 0.99
+        const lowDiff = Math.abs(recentCloses[first]! - recentCloses[second]!) / recentCloses[first]!
+        if (lowDiff < 0.02 && necklineBreak) {
+          return { pattern: 'double-bottom', confidence: 0.7 + (necklineBreak ? 0.15 : 0), description: `쌍바닥(W) — 저점 ${gap}봉 간격` }
+        }
+      }
+    }
+  }
+
+  // 2) 불 플래그 (Bull Flag) — 급등 후 좁은 횡보/미세 조정
+  if (n >= 15) {
+    const flagPole = closes.slice(-15, -5)
+    const flag = closes.slice(-5)
+    const poleStart = flagPole[0] ?? 0
+    const poleEnd = flagPole[flagPole.length - 1] ?? 0
+    const poleGain = poleStart > 0 ? ((poleEnd - poleStart) / poleStart) * 100 : 0
+    const flagHigh = Math.max(...flag)
+    const flagLow = Math.min(...flag)
+    const flagRange = flagHigh > 0 ? ((flagHigh - flagLow) / flagHigh) * 100 : 0
+
+    if (poleGain > 2 && flagRange < poleGain * 0.4) {
+      const breakout = closes[n - 1]! > flagHigh
+      return {
+        pattern: 'bull-flag',
+        confidence: breakout ? 0.75 : 0.55,
+        description: `불플래그 — 기둥 +${poleGain.toFixed(1)}%, 깃발 ${flagRange.toFixed(1)}%${breakout ? ' 돌파' : ''}`,
+      }
+    }
+  }
+
+  // 3) 역헤드앤숄더 (Inverse H&S) — 3개 저점 중 가운데가 가장 낮음
+  if (n >= 20) {
+    const segment = closes.slice(-20)
+    // 5구간으로 나눠서 저점 찾기
+    const segSize = Math.floor(segment.length / 3)
+    const leftMin = Math.min(...segment.slice(0, segSize))
+    const headMin = Math.min(...segment.slice(segSize, segSize * 2))
+    const rightMin = Math.min(...segment.slice(segSize * 2))
+
+    if (headMin < leftMin && headMin < rightMin) {
+      const leftDiff = Math.abs(leftMin - rightMin) / leftMin
+      if (leftDiff < 0.03) {  // 좌우 어깨 대칭 (±3%)
+        const neckline = Math.max(leftMin, rightMin) * 1.01
+        const breakout = closes[n - 1]! > neckline
+        return {
+          pattern: 'inv-head-shoulder',
+          confidence: breakout ? 0.8 : 0.5,
+          description: `역헤숄 — 머리 ${headMin}, 어깨 ${leftMin}/${rightMin}${breakout ? ' 넥라인 돌파' : ''}`,
+        }
+      }
+    }
+  }
+
+  return { pattern: 'none', confidence: 0, description: '' }
+}
+
+/** 멀티 타임프레임 정렬도 — 1분봉/5분봉/일봉 방향이 일치하는지 확인 */
+export const calcMultiTimeframeAlignment = (
+  bars1m: MinutePrice[],
+  bars5m: MinutePrice[],
+  dailyCloses: number[]
+): {
+  aligned: boolean      // 3개 타임프레임 모두 같은 방향인가
+  direction: 'bullish' | 'bearish' | 'mixed'
+  score: number          // -3 ~ +3 (강한 하락 ~ 강한 상승)
+} => {
+  let score = 0
+
+  // 1분봉 방향: 최근 5봉 추세
+  if (bars1m.length >= 6) {
+    const sorted = [...bars1m].sort((a, b) => a.time.localeCompare(b.time))
+    const recent = sorted.slice(-5)
+    const first = recent[0]!.close
+    const last = recent[recent.length - 1]!.close
+    score += last > first ? 1 : last < first ? -1 : 0
+  }
+
+  // 5분봉 방향: 최근 3봉 추세
+  if (bars5m.length >= 4) {
+    const sorted = [...bars5m].sort((a, b) => a.time.localeCompare(b.time))
+    const recent = sorted.slice(-3)
+    const first = recent[0]!.close
+    const last = recent[recent.length - 1]!.close
+    score += last > first ? 1 : last < first ? -1 : 0
+  }
+
+  // 일봉 방향: SMA(3) vs SMA(7)
+  if (dailyCloses.length >= 7) {
+    const sma3 = dailyCloses.slice(-3).reduce((a, b) => a + b, 0) / 3
+    const sma7 = dailyCloses.slice(-7).reduce((a, b) => a + b, 0) / 7
+    score += sma3 > sma7 ? 1 : sma3 < sma7 ? -1 : 0
+  }
+
+  const direction = score >= 2 ? 'bullish' : score <= -2 ? 'bearish' : 'mixed'
+  return { aligned: Math.abs(score) >= 2, direction, score }
+}
+
+// ════════════════════════════════════════════════════
 // 레거시 신호 분석 함수 (추천 엔진에서 사용)
 // ════════════════════════════════════════════════════
 
