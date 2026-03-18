@@ -1,314 +1,240 @@
 <div align="center">
+<br/>
 
-# 🚀 forAnt
-
-### _개미들을 위한 AI 자율 트레이딩 플랫폼_
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://capsule-render.vercel.app/api?type=venom&color=0:0d0d0d,50:1a1a2e,100:16213e&height=160&section=header&text=forAnt&fontSize=52&fontColor=e2e8f0&fontAlignY=45&desc=AI%20Autonomous%20Scalping%20Platform&descSize=14&descColor=94a3b8&descAlignY=68">
+  <img src="https://capsule-render.vercel.app/api?type=venom&color=0:0d0d0d,50:1a1a2e,100:16213e&height=160&section=header&text=forAnt&fontSize=52&fontColor=e2e8f0&fontAlignY=45&desc=AI%20Autonomous%20Scalping%20Platform&descSize=14&descColor=94a3b8&descAlignY=68" width="100%"/>
+</picture>
 
 <br/>
 
-![Next.js](https://img.shields.io/badge/Next.js_16-000?style=for-the-badge&logo=next.js)
-![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
-![Tailwind](https://img.shields.io/badge/Tailwind_v4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
-![KIS](https://img.shields.io/badge/KIS_OpenAPI-FF6B35?style=for-the-badge)
+<p>
+  <img src="https://img.shields.io/badge/Next.js_16-0d0d0d?style=flat-square&logo=next.js&logoColor=white"/>
+  <img src="https://img.shields.io/badge/TypeScript-0d0d0d?style=flat-square&logo=typescript&logoColor=3178c6"/>
+  <img src="https://img.shields.io/badge/Tailwind_v4-0d0d0d?style=flat-square&logo=tailwindcss&logoColor=06b6d4"/>
+  <img src="https://img.shields.io/badge/KIS_OpenAPI-0d0d0d?style=flat-square&logoColor=white"/>
+</p>
 
-<br/>
-
-<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=F97316&center=true&vCenter=true&random=false&width=500&lines=%F0%9F%90%9C+%EA%B0%9C%EB%AF%B8%EB%93%A4%EC%9D%98+%EC%97%AD%EC%8A%B5;AI+%EC%8A%A4%EC%BA%98%ED%95%91+%C2%B7+%EC%9E%90%EB%8F%99+%EC%9D%B5%EC%A0%88%2F%EC%86%90%EC%A0%88;%EB%B8%8C%EB%9D%BC%EC%9A%B0%EC%A0%80+%EA%BA%BC%EB%8F%84+24%2F7+%EC%8B%A4%ED%96%89;%EB%AA%A8%EC%9D%98%ED%88%AC%EC%9E%90%EB%A1%9C+%EC%95%88%EC%A0%84%ED%95%98%EA%B2%8C+%EC%97%B0%EC%8A%B5" alt="Typing SVG" />
+<sub>개미는 작지만, 함께하면 강하다</sub>
 
 <br/><br/>
 
-> **"매일 차트 볼 시간 없잖아요. AI한테 맡기세요."**
+</div>
+
+## Overview
+
+AI가 종목을 탐색하고, 매수/매도 타이밍을 판단하고, 익절/손절까지 자동으로 관리하는 풀스택 트레이딩 플랫폼.
+브라우저를 꺼도 서버에서 3분 간격으로 계속 실행됩니다.
 
 <br/>
 
-</div>
+## Features
 
----
+<details>
+<summary><b>Dashboard</b> — 시세 · 환율 · 랭킹 · AI 추천</summary>
+<br/>
 
-## ✨ 한눈에 보기
+- 실전투자 / 모의투자 듀얼 모드 (런타임 전환)
+- 실시간 환율 (USD, JPY, EUR, CNY) — 양방향 환산
+- KIS API 거래량 상위 종목 랭킹 (국내/미국)
+- AI 기술지표 기반 종목 추천
+- 잔고 · 보유종목 · 주문내역 통합 표시
+
+</details>
+
+<details>
+<summary><b>Trading</b> — 5가지 주문 유형</summary>
+<br/>
+
+| 주문 유형 | 시간 |
+|-----------|------|
+| 시장가 | 09:00 — 15:30 |
+| 지정가 | 09:00 — 15:30 |
+| 장전시간외 | 08:20 — 08:40 |
+| 시간외종가 | 15:40 — 16:00 |
+| 시간외단일가 | 16:00 — 18:00 |
+
+실전투자 주문은 비밀번호 보호 적용.
+
+</details>
+
+<details>
+<summary><b>Autonomous Scalping</b> — 핵심 기능</summary>
+<br/>
+
+서버사이드에서 3분 간격으로 자동 실행되는 자율 스캘핑 봇.
 
 ```
-🏠 대시보드        →  환율 · 시세 · 랭킹 · AI 추천 · 잔고 · 보유종목
-💹 매매            →  시장가 · 지정가 · 장전시간외 · 시간외종가 · 시간외단일가
-🤖 자율 스캘핑     →  종목탐색 → 매수 → 익절/손절 → 전부 AI가 알아서
-📊 리포트          →  일일/주간 손익 자동 리포트 · 전략별 승률 추적
-⚙️ 설정            →  실전/모의 듀얼 모드 · API 연결 상태 · 비밀번호 보호
+스캔 → 분석 → 매수 판단 → 보유 관리 → 익절/손절 → 리포트
 ```
 
----
+**스캔**: KIS 거래량 상위 30종목 자동 스캔 (ETF/인버스 제외)
+**분석**: 12종 기술지표 + 수급 + 패턴 인식으로 종합 점수 산출
+**매수**: 점수 기준 충족 시 ATR 기반 포지션 사이징으로 매수
+**관리**: 트레일링 스탑 + 분할 익절 + 시간대별 전략으로 보유 관리
+**학습**: 매매 사유별 승률을 추적해서 다음 판단에 반영
 
-## 🧠 AI 분석 엔진 — 뭐가 들어있나요?
+</details>
 
-<table>
-<tr>
-<td width="50%">
+<details>
+<summary><b>NXT Exchange</b> — 대체거래소 자동 전환</summary>
+<br/>
 
-### 📈 기본 지표
-| 지표 | 역할 |
-|------|------|
-| RSI (14) | 과매수/과매도 감지 |
-| MACD | 추세 전환 시그널 |
-| 볼린저밴드 | 변동성 + 밴드워크 |
-| SMA / EMA | 이동평균 골든/데드크로스 |
-| ATR | 변동성 기반 익절/손절 |
-| OBV | 거래량 추세 확인 |
+KRX 시간외단일가 불가 종목 → NXT(넥스트레이드, 08:00~20:00) 자동 재시도.
+NXT 주문 시 실시간 현재가를 조회해서 가격 에러 방지.
 
-</td>
-<td width="50%">
+</details>
 
-### 🔬 고급 지표
-| 지표 | 역할 |
-|------|------|
-| Williams %R | RSI보다 빠른 과매수/과매도 |
-| Keltner Channel | ATR 기반 채널 돌파 |
-| Volatility Squeeze | BB↔KC 수렴 → 폭발 직전 감지 |
-| Volume Profile | 가격대별 거래량 (POC/VAH/VAL) |
-| 패턴 인식 | 쌍바닥 · 불플래그 · 역헤숄 |
-| 멀티 타임프레임 | 1분·5분·일봉 방향 정렬 |
+<details>
+<summary><b>Daily Report</b> — 자동 손익 리포트</summary>
+<br/>
 
-</td>
-</tr>
-</table>
+```
+GET /api/trading-report?type=daily    → 오늘 리포트
+GET /api/trading-report?type=weekly   → 7일 합산
+GET /api/trading-report?type=reasons  → 전략별 승률
+```
+
+`.trading-reports/` 폴더에 일별 JSON 자동 저장.
+
+</details>
 
 <br/>
 
-<div align="center">
+## Analysis Engine
 
-### 🏦 수급 분석
+### Indicators
 
-**외국인 순매수** · **기관 순매수** · **개인 순매수** — KIS 투자자별 매매동향 API로 실시간 반영
+기본 지표와 고급 지표를 조합해서 종목별 종합 점수를 산출합니다.
 
-</div>
-
----
-
-## 🤖 자율 스캘핑 — 이게 핵심이에요
-
-<div align="center">
-
-```mermaid
-graph LR
-    A[🔍 종목 스캔] --> B[📊 기술분석]
-    B --> C[💰 매수 판단]
-    C --> D[📈 익절/손절]
-    D --> E[📋 리포트]
-    E --> A
-
-    style A fill:#f97316,color:#fff
-    style B fill:#8b5cf6,color:#fff
-    style C fill:#10b981,color:#fff
-    style D fill:#ef4444,color:#fff
-    style E fill:#3b82f6,color:#fff
-```
-
-</div>
-
-### 🎯 리스크 관리가 진짜 중요하죠
-
-| 기능 | 설명 |
+| 기본 | 고급 |
 |------|------|
-| 🛡️ **트레일링 스탑** | 고점 대비 ATR×2 하락 시 자동 매도 — 수익은 지키고 |
-| ✂️ **분할 익절** | 익절가 60% 도달 → 50% 먼저 매도, 나머지 트레일링 |
-| 📐 **ATR 포지션 사이징** | 변동성 큰 종목은 적게, 안정적 종목은 많이 |
-| 🏭 **섹터 한도** | 동일 섹터 최대 2종목 — 몰빵 방지 |
-| ⏰ **시간대 전략** | 장 초반·점심·마감 각각 다른 전략 적용 |
-| 🧪 **적응형 학습** | 매매 사유별 승률 추적 → 점수 자동 보정 |
-| 📉 **일일 손실 한도** | 설정 금액 초과 시 자동 중단 |
+| RSI (14) | Williams %R |
+| MACD | Keltner Channel |
+| Bollinger Bands | Volatility Squeeze |
+| SMA / EMA | Volume Profile (POC/VAH/VAL) |
+| ATR | Price Pattern (쌍바닥 · 불플래그 · 역헤숄) |
+| OBV | Multi-Timeframe Alignment |
 
-### 🌙 에프터마켓도 OK
+### Risk Management
 
-| 구분 | 시간 | 방식 |
-|------|------|------|
-| 장전시간외 | 08:20~08:40 | KRX |
-| 정규장 | 09:00~15:30 | KRX |
-| 시간외종가 | 15:40~16:00 | KRX |
-| 시간외단일가 | 16:00~18:00 | KRX |
-| **NXT 대체거래소** | **08:00~20:00** | **KRX 불가 시 자동 전환** |
+| 기능 | 동작 |
+|------|------|
+| Trailing Stop | 고점 대비 ATR×2 하락 시 자동 매도 |
+| Partial Take-Profit | 익절가 60% 도달 → 절반 매도, 나머지 트레일링 |
+| ATR Position Sizing | 변동성 비례 포지션 크기 자동 계산 |
+| Sector Limit | 동일 섹터 최대 2종목 |
+| Time-based Strategy | 장 초반(+10) · 점심(+15) · 마감(자동 익절) |
+| Adaptive Learning | 매매 사유별 승률 추적 → 점수 자동 보정 |
+| Daily Loss Limit | 설정 금액 초과 시 자동 중단 |
 
-> NXT(넥스트레이드)에서 주문할 때는 **실시간 현재가를 조회**해서 가격 에러를 방지해요
+### Supply & Demand
 
----
+외국인 · 기관 · 개인 순매수 데이터를 KIS 투자자별 매매동향 API로 실시간 반영.
+외국인+기관 동시 순매수 시 가점, 동시 순매도 시 감점.
 
-## 📊 자동 리포트
+<br/>
 
-```
-📁 .trading-reports/
-├── 2026-03-18.json     ← 오늘의 리포트 (장 종료 후 자동 생성)
-├── 2026-03-17.json
-├── 2026-03-16.json
-└── ...
-```
-
-| API | 설명 |
-|-----|------|
-| `GET /api/trading-report?type=daily` | 오늘 일일 리포트 |
-| `GET /api/trading-report?type=weekly` | 최근 7일 합산 |
-| `GET /api/trading-report?type=reasons` | 전략(reason)별 승률 통계 |
-
----
-
-## 🖥️ UI 미리보기
-
-<div align="center">
-
-| 대시보드 | 자율 스캘핑 |
-|:---:|:---:|
-| 환율 · 랭킹 · AI추천 · 잔고 | 스캔 · 보유종목 · 매매로그 |
-| `Dark Glassmorphism` | `Ambient Glow` |
-
-</div>
-
-### 🎨 디자인 키워드
+## Stack
 
 ```
-Dark Mode Only · Glassmorphism · Ambient Gradient Glow
-Mono Font Numbers · Emerald(+) / Rose(-) Color System
+Framework    Next.js 16 · App Router · Turbopack
+Language     TypeScript (strict)
+Styling      Tailwind CSS v4 · Dark Glassmorphism · Ambient Glow
+State        Zustand v5 (client) · TanStack Query v5 (server)
+UI           shadcn/ui · Radix Primitives
+API          KIS OpenAPI · Frankfurter ECB · NXT Exchange
 ```
 
----
+<br/>
 
-## ⚡ 빠른 시작
-
-### 1️⃣ 설치
+## Getting Started
 
 ```bash
 git clone https://github.com/JH-100/fotAnt.git
-cd fotAnt
-npm install
+cd fotAnt && npm install
 ```
 
-### 2️⃣ 환경변수
-
-`.env.local` 파일 생성:
+`.env.local` 생성 :
 
 ```env
-# ========== 실전투자 ==========
-KIS_REAL_APP_KEY=발급받은_앱키
-KIS_REAL_APP_SECRET=발급받은_시크릿
-KIS_REAL_ACCOUNT_NO=계좌번호-상품코드   # 예: 64605609-01
+# 실전투자
+KIS_REAL_APP_KEY=
+KIS_REAL_APP_SECRET=
+KIS_REAL_ACCOUNT_NO=          # 64605609-01
 
-# ========== 모의투자 ==========
-KIS_MOCK_APP_KEY=발급받은_모의_앱키
-KIS_MOCK_APP_SECRET=발급받은_모의_시크릿
-KIS_MOCK_ACCOUNT_NO=모의계좌번호-상품코드  # 예: 50177280-01
+# 모의투자
+KIS_MOCK_APP_KEY=
+KIS_MOCK_APP_SECRET=
+KIS_MOCK_ACCOUNT_NO=          # 50177280-01
 
-# ========== 실전투자 주문 비밀번호 ==========
-TRADING_PASSWORD=원하는비밀번호
+# 주문 비밀번호
+TRADING_PASSWORD=
 ```
 
-> 🔑 KIS API 키는 [한국투자증권 API 포털](https://apiportal.koreainvestment.com)에서 발급
-
-### 3️⃣ 실행
+> KIS API 키 발급 → [apiportal.koreainvestment.com](https://apiportal.koreainvestment.com)
 
 ```bash
 npm run dev
 ```
 
-👉 [http://localhost:3000](http://localhost:3000) 접속
-
-> 같은 네트워크의 다른 기기에서도 `http://서버IP:3000`으로 접속 가능!
-
----
-
-## 🗂️ 프로젝트 구조
-
-```
-src/
-├── app/
-│   ├── (dashboard)/              # 📄 페이지 (대시보드, 자동매매, 설정)
-│   └── api/
-│       ├── exchange-rate/        # 💱 환율
-│       ├── stocks/               # 📈 주식 시세
-│       ├── ranking/              # 🏆 랭킹
-│       ├── kis/                  # 🏦 KIS (잔고, 주문, 내역)
-│       ├── recommendations/      # 🧠 AI 추천
-│       ├── auto-trade/           # 🤖 자율 스캘핑
-│       └── trading-report/       # 📊 일일/주간 리포트
-├── components/
-│   ├── dashboard/                # 대시보드 UI
-│   ├── trading/                  # 매매 UI
-│   ├── auto-trade/               # 스캘핑 UI (제어·설정·보유종목·스캔·로그)
-│   ├── layout/                   # 네비게이션
-│   └── ui/                       # shadcn/ui
-├── lib/
-│   ├── kis-api.ts                # KIS API (듀얼 모드 · 토큰 · 현재가 · 수급)
-│   ├── scalping-engine.ts        # 스캘핑 엔진 (트레일링·분할익절·학습·리포트)
-│   ├── server-scheduler.ts       # 서버 스케줄러 (3분 간격 · 보유종목 캐시)
-│   ├── stock-scanner.ts          # 종목 스캐너 (15+ 지표 종합 분석)
-│   ├── indicators.ts             # 기술 지표 (기본 6종 + 고급 6종)
-│   ├── frankfurter.ts            # 환율 API
-│   ├── recommendation-engine.ts  # 추천 엔진
-│   └── strategies/               # 매매 전략 타입
-├── hooks/                        # TanStack Query 훅
-├── store/                        # Zustand 스토어
-├── types/                        # TypeScript 타입
-└── constants/                    # 상수
-```
-
----
-
-## 🛡️ 보안
-
-| 항목 | 설명 |
-|------|------|
-| 🔐 실전 주문 | `TRADING_PASSWORD`로 비밀번호 보호 |
-| 🧪 모의투자 | 비밀번호 없이 자유롭게 |
-| 🔒 API 키 | 서버사이드 전용, 브라우저 미노출 |
-| 🎫 토큰 관리 | 모드별 분리 캐시, 중복 발급 방지 |
-
----
-
-## 🔧 기술 스택
-
-<div align="center">
-
-| Layer | Stack |
-|-------|-------|
-| **Framework** | Next.js 16 (App Router + Turbopack) |
-| **Language** | TypeScript (strict mode) |
-| **Styling** | Tailwind CSS v4 · Dark Glassmorphism |
-| **State** | Zustand v5 (client) · TanStack Query v5 (server) |
-| **UI** | shadcn/ui · Radix Primitives |
-| **API** | 한국투자증권 KIS OpenAPI · Frankfurter ECB |
-| **Trading** | NXT 넥스트레이드 대체거래소 지원 |
-
-</div>
-
----
-
-## 📌 데이터 소스
-
-| 데이터 | 소스 | API 키 |
-|--------|------|--------|
-| 💱 환율 | Frankfurter (ECB) | ❌ 불필요 |
-| 📈 주식 시세 · 거래량 · 분봉 · 일봉 | KIS OpenAPI | ✅ 필요 |
-| 🏦 잔고 · 주문 · 체결내역 | KIS OpenAPI | ✅ 필요 |
-| 👥 투자자별 매매동향 (수급) | KIS OpenAPI | ✅ 필요 |
-
----
-
-## ⚠️ 주의사항
-
-```diff
-+ 모의투자를 충분히 테스트한 후 실전투자로 전환하세요
-+ 서버사이드 스케줄러는 브라우저 닫아도 계속 실행됩니다
-- 투자에 대한 최종 판단과 책임은 사용자 본인에게 있습니다
-! 서버 재시작 시 스케줄러 상태가 초기화됩니다 (로그는 파일로 보존)
-```
-
----
-
-<div align="center">
-
-### 🐜 forAnt
-
-**개미는 작지만, 함께하면 강하다.**
-
-_Built with ❤️ and AI_
+`http://localhost:3000` — 같은 네트워크 내 다른 기기에서도 접속 가능.
 
 <br/>
 
-![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
-![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=flat-square)
+## Structure
 
+```
+src/
+├─ app/
+│  ├─ (dashboard)/                 페이지
+│  └─ api/
+│     ├─ exchange-rate/            환율
+│     ├─ stocks/                   시세
+│     ├─ ranking/                  랭킹
+│     ├─ kis/                      잔고 · 주문 · 내역
+│     ├─ recommendations/          AI 추천
+│     ├─ auto-trade/               자율 스캘핑
+│     └─ trading-report/           리포트
+├─ components/
+│  ├─ dashboard/                   대시보드 UI
+│  ├─ trading/                     매매 UI
+│  ├─ auto-trade/                  스캘핑 UI
+│  └─ ui/                          shadcn/ui
+├─ lib/
+│  ├─ kis-api.ts                   KIS API 클라이언트
+│  ├─ scalping-engine.ts           스캘핑 엔진
+│  ├─ server-scheduler.ts          서버 스케줄러
+│  ├─ stock-scanner.ts             종목 스캐너
+│  ├─ indicators.ts                기술 지표 (12종)
+│  └─ strategies/                  매매 전략
+├─ hooks/                          TanStack Query
+├─ store/                          Zustand
+└─ types/                          TypeScript 타입
+```
+
+<br/>
+
+## Security
+
+- 실전 주문 → `TRADING_PASSWORD` 필수
+- 모의투자 → 비밀번호 없이 사용
+- API 키 → 서버사이드 전용, 브라우저 미노출
+- 토큰 → 모드별 분리 캐시, 중복 발급 방지
+
+<br/>
+
+## Notes
+
+- 모의투자를 충분히 테스트한 후 실전으로 전환하세요
+- 서버 스케줄러는 브라우저를 닫아도 계속 실행됩니다
+- 서버 재시작 시 스케줄러 상태 초기화 (로그는 파일로 보존)
+- **투자에 대한 최종 판단과 책임은 사용자 본인에게 있습니다**
+
+<br/>
+
+---
+
+<div align="center">
+<sub>MIT License</sub>
 </div>
