@@ -1,6 +1,6 @@
 // 자율 스캘핑 엔진 — 종목 탐색 + 동적 익절/손절 전부 봇이 결정
 import type { KisBalance } from '@/types/kis'
-import { getKisBalance, getKisMinutePrices, aggregateMinuteBars, placeKisOrder } from './kis-api'
+import { getKisBalance, getKisMinutePrices, aggregateMinuteBars, placeKisOrder, getKisCurrentPrice } from './kis-api'
 import type { TradingMode } from './kis-api'
 import { scanMarket, type ScanResult } from './stock-scanner'
 import { calcMinuteATR } from './indicators'
@@ -223,7 +223,7 @@ export const executeScalpingCycle = async (
   // ─── 에프터마켓 보정 ───
   // 에프터마켓 보정: 최소점수만 올리고, 건당금액은 사용자 설정 그대로 유지
   const afterMarket = isAfterMarketTime()
-  const effectiveMinScore = afterMarket ? Math.max(config.minScore + 15, 40) : config.minScore
+  const effectiveMinScore = afterMarket ? Math.max(config.minScore + 10, 35) : config.minScore
   const effectiveMaxPerTrade = config.maxPerTrade  // 사용자 설정 존중
   const effectiveMaxPositions = afterMarket ? Math.min(config.maxPositions, 3) : config.maxPositions
 
@@ -244,11 +244,7 @@ export const executeScalpingCycle = async (
     for (const s of buySignals) {
       const alreadyHeld = freshBalance.holdings.find(h => h.code === s.code && h.quantity > 0)
       if (alreadyHeld) {
-        // 에프터마켓에서는 추가매수(불타기/물타기) 안 함
-        if (afterMarket) {
-          console.log(`[스캘핑] ${s.name}(${s.score}점) 에프터마켓 — 추가매수 스킵`)
-          continue
-        }
+        // 에프터마켓에서도 추가매수 허용 (조건은 동일)
         // 추가 매수 판단: 불타기 / 물타기
         const totalInvested = alreadyHeld.avgPrice * alreadyHeld.quantity
         const maxPerStock = config.maxPerTrade * 2 // 1종목 최대 건당금액의 2배
@@ -410,11 +406,18 @@ const executeBuy = async (
 
     // KRX 시간외단일가 불가 → NXT 애프터마켓으로 재시도 (실전만, 모의투자 NXT 불가)
     if (isNxtRetryable(msg) && isNxtAfterMarket() && config.mode === 'real') {
-      console.log(`[스캘핑] ${name} KRX 시간외 불가 → NXT 애프터마켓 지정가로 재시도`)
       try {
+        // NXT 현재가 조회 → 정확한 가격으로 지정가 주문 (스캔가격은 KRX 기준이라 하한가 미달 가능)
+        const nxtPrice = await getKisCurrentPrice(code, config.mode)
+        const nxtQty = Math.floor(config.maxPerTrade / nxtPrice)
+        if (nxtQty <= 0) {
+          throw new Error(`NXT 현재가 ${nxtPrice}원 > 건당한도 ${config.maxPerTrade}원`)
+        }
+        console.log(`[스캘핑] ${name} KRX 시간외 불가 → NXT 지정가(현재가 ${nxtPrice}원, ${nxtQty}주)로 재시도`)
+
         const nxtResult = await placeKisOrder({
-          side: 'buy', code, quantity,
-          price,
+          side: 'buy', code, quantity: nxtQty,
+          price: nxtPrice,
           orderType: 'limit',
           exchange: 'NXT',
         }, config.mode)
@@ -424,7 +427,7 @@ const executeBuy = async (
           id: `${Date.now()}-${code}-buy-nxt`,
           timestamp: new Date().toISOString(),
           strategy: '자율 스캘핑',
-          action: 'BUY', code, name, quantity, price,
+          action: 'BUY', code, name, quantity: nxtQty, price: nxtPrice,
           reason: reason + ' (NXT)',
           result: nxtResult.status === 'executed' ? 'success' : 'failed',
           message: `[NXT] ${nxtResult.message}`,
@@ -488,11 +491,12 @@ const executeSell = async (
 
     // KRX 시간외단일가 불가 → NXT 애프터마켓으로 재시도
     if (isNxtRetryable(msg) && isNxtAfterMarket() && config.mode === 'real') {
-      console.log(`[스캘핑] ${name} 매도 KRX 불가 → NXT 재시도`)
       try {
+        const nxtPrice = await getKisCurrentPrice(code, config.mode)
+        console.log(`[스캘핑] ${name} 매도 KRX 불가 → NXT 지정가(현재가 ${nxtPrice}원)로 재시도`)
         const nxtResult = await placeKisOrder({
           side: 'sell', code, quantity,
-          price,
+          price: nxtPrice,
           orderType: 'limit',
           exchange: 'NXT',
         }, config.mode)

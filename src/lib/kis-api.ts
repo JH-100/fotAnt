@@ -282,19 +282,19 @@ export const placeKisOrder = async (request: KisOrderRequest, mode?: TradingMode
     'after-hours': '07',   // KRX 시간외단일가
   }
 
-  const needsPrice = request.orderType === 'limit' || request.orderType === 'after-hours'
-    || exchange === 'NXT'  // NXT는 항상 지정가 필요
-  const ordUnpr = needsPrice ? String(request.price ?? 0) : '0'
-
-  // NXT일 때 ORD_DVSN은 지정가(00) 사용 (NXT는 일반 시장가 불가)
+  // NXT일 때 ORD_DVSN 결정 (NXT는 일반 시장가 불가)
   let ordDvsn = ordDvsnMap[request.orderType] ?? '01'
   if (exchange === 'NXT') {
-    // NXT 허용: 00(지정가), 03(최유리), 04(최우선), 11~16(IOC/FOK), 21~24(중간가/스톱)
-    // 시장가(01), 장전(05), 장후(06), 시간외단일가(07)는 NXT 불가 → 지정가로 변환
     if (['01', '02', '05', '06', '07'].includes(ordDvsn)) {
-      ordDvsn = '00' // 지정가
+      // 가격 지정 있으면 지정가(00), 없으면 최유리지정가(03) — 호가창 최적가 자동 체결
+      ordDvsn = request.price ? '00' : '03'
     }
   }
+
+  // 주문단가: 최유리(03)/최우선(04)/시장가(01)는 가격 불필요
+  const noPriceTypes = ['01', '03', '04', '13', '14', '15', '16']
+  const needsPrice = !noPriceTypes.includes(ordDvsn) && (request.orderType === 'limit' || request.orderType === 'after-hours' || ordDvsn === '00')
+  const ordUnpr = needsPrice ? String(request.price ?? 0) : '0'
 
   const body: Record<string, string> = {
     CANO: cano,
@@ -304,6 +304,10 @@ export const placeKisOrder = async (request: KisOrderRequest, mode?: TradingMode
     ORD_QTY: String(request.quantity),
     ORD_UNPR: ordUnpr,
     EXCG_ID_DVSN_CD: exchange,  // KRX | NXT | SOR
+  }
+
+  if (exchange === 'NXT') {
+    console.log(`[KIS주문] NXT 요청 — ${isBuy ? '매수' : '매도'} ${request.code} ORD_DVSN=${ordDvsn} QTY=${request.quantity} UNPR=${ordUnpr} TR=${trId}`)
   }
 
   const [headers, hashkey] = await Promise.all([
@@ -320,8 +324,13 @@ export const placeKisOrder = async (request: KisOrderRequest, mode?: TradingMode
     }
   )
 
-  if (!res.ok) throw new Error(`KIS 주문 실패: ${res.status}`)
-  const data = await res.json()
+  const data = await res.json().catch(() => null)
+  if (!res.ok) {
+    const errMsg = data?.msg1 || data?.message || `HTTP ${res.status}`
+    console.log(`[KIS주문] ${res.status} 에러 — ${exchange} ${ordDvsn} ${request.code}:`, JSON.stringify(data))
+    throw new Error(`KIS 주문 실패: ${errMsg}`)
+  }
+  if (!data) throw new Error('KIS 주문 응답 파싱 실패')
 
   if (data.rt_cd !== '0') {
     throw new Error(data.msg1 || '주문이 거절되었습니다.')
@@ -338,6 +347,32 @@ export const placeKisOrder = async (request: KisOrderRequest, mode?: TradingMode
     executedAt: new Date().toISOString(),
     message: data.msg1 ?? '주문이 접수되었습니다.',
   }
+}
+
+// ─── 현재가 조회 (NXT 재시도용) ─────────────────────
+
+export const getKisCurrentPrice = async (code: string, mode?: TradingMode): Promise<number> => {
+  const m = mode ?? defaultMode()
+  const headers = await getHeaders(m, 'FHKST01010100')
+  const cfg = getModeConfig(m)
+
+  const params = new URLSearchParams({
+    FID_COND_MRKT_DIV_CODE: 'J',
+    FID_INPUT_ISCD: code,
+  })
+
+  const res = await fetch(
+    `${cfg.baseUrl}/uapi/domestic-stock/v1/quotations/inquire-price?${params.toString()}`,
+    { headers }
+  )
+
+  if (!res.ok) throw new Error(`KIS 현재가 조회 실패: ${res.status}`)
+  const data = await res.json()
+  if (data.rt_cd !== '0') throw new Error(`KIS 현재가 오류: ${data.msg1}`)
+
+  const price = parseInt(data.output?.stck_prpr ?? '0', 10)
+  if (price <= 0) throw new Error(`KIS 현재가 0원: ${code}`)
+  return price
 }
 
 // ─── 일별 시세 조회 (기술지표 분석용) ────────────────
