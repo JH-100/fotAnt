@@ -44,6 +44,7 @@ let lastResetDate = ''
 let dailyPnL = 0
 const tradeLogs: TradeLogEntry[] = []
 let lastScanResults: ScanResult[] = []
+let cycleRunning = false  // 동시실행 방지 플래그
 
 // 외부에서 로그/통계 복원용 (서버 스케줄러가 파일에서 읽어서 주입)
 export const restoreLogs = (logs: TradeLogEntry[]) => {
@@ -62,6 +63,11 @@ const resetDailyIfNeeded = () => {
     dailyOrderCount = 0
     dailyPnL = 0
     lastResetDate = today
+    // 전일 positionMetas 중 현재 미보유 종목 정리 (보유 중인 건 유지)
+    for (const code of Object.keys(positionMetas)) {
+      // 일일 리셋 시 오래된 메타 정리 — 보유 확인은 잔고 조회 후에 하므로 여기선 전부 리셋
+      delete positionMetas[code]
+    }
   }
 }
 
@@ -69,7 +75,7 @@ export const getScalpingLogs = (): TradeLogEntry[] => [...tradeLogs].reverse()
 export const getLastScan = (): ScanResult[] => lastScanResults
 export const getDailyStats = () => ({ orders: dailyOrderCount, pnl: dailyPnL })
 
-/** 장 운영시간 체크 */
+/** 장 운영시간 체크 (장전시간외 08:20 ~ 시간외단일가 18:00, NXT 포함) */
 export const isMarketOpen = (): boolean => {
   const now = new Date()
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000)
@@ -78,7 +84,7 @@ export const isMarketOpen = (): boolean => {
   const day = kst.getUTCDay()
   if (day === 0 || day === 6) return false
   const time = hours * 100 + minutes
-  return time >= 700 && time <= 1800
+  return time >= 820 && time <= 1800  // 08:20(장전시간외) ~ 18:00(시간외단일가)
 }
 
 /** 현재 시장 구간에 맞는 주문 유형 결정 */
@@ -145,8 +151,33 @@ export const executeScalpingCycle = async (
   config: ScalpingConfig = DEFAULT_SCALPING,
   password?: string
 ): Promise<{ logs: TradeLogEntry[]; scan: ScanResult[] }> => {
+  // 동시실행 방지
+  if (cycleRunning) {
+    console.log('[스캘핑] 이전 사이클 실행 중 — 스킵')
+    return { logs: [], scan: lastScanResults }
+  }
+  cycleRunning = true
+
+  try {
+  return await _executeScalpingCycleInner(config, password)
+  } finally {
+    cycleRunning = false
+  }
+}
+
+const _executeScalpingCycleInner = async (
+  config: ScalpingConfig,
+  password?: string
+): Promise<{ logs: TradeLogEntry[]; scan: ScanResult[] }> => {
   resetDailyIfNeeded()
   const newLogs: TradeLogEntry[] = []
+
+  // 일일 손실 한도 체크 (-5% 이상 손실 시 거래 중지)
+  const maxDailyLoss = config.budget * -0.05
+  if (dailyPnL < maxDailyLoss) {
+    console.log(`[스캘핑] 🛑 일일 손실 한도 도달 (${dailyPnL.toLocaleString()}원 < ${maxDailyLoss.toLocaleString()}원) — 거래 중지`)
+    return { logs: [], scan: lastScanResults }
+  }
 
   // 1. 잔고 조회 (실패해도 스캔은 계속)
   const balance = await getBalanceSafe(config.mode)
@@ -234,7 +265,7 @@ export const executeScalpingCycle = async (
   if (freshBalance) {
     const currentPositionCount = freshBalance.holdings.filter(h => h.quantity > 0).length
     let positionSlots = effectiveMaxPositions - currentPositionCount
-    const freshCash = Math.min(freshBalance.cashBalance, config.budget)
+    let freshCash = Math.min(freshBalance.cashBalance, config.budget)
 
     // ─── 4A. 신규 매수 ───
     const buySignals = scanResults.filter(s => s.signal === 'BUY' && s.score >= effectiveMinScore)
@@ -307,6 +338,7 @@ export const executeScalpingCycle = async (
         newLogs.push(log)
         if (log.result === 'success') {
           positionSlots--
+          freshCash -= quantity * target.price  // 매수 성공 시 잔고 차감
           positionMetas[target.code] = {
             takeProfitPercent: target.takeProfitPercent,
             stopLossPercent: target.stopLossPercent,
@@ -340,6 +372,7 @@ export const executeScalpingCycle = async (
       if (log) {
         newLogs.push(log)
         if (log.result === 'success') {
+          freshCash -= quantity * target.price  // 추가매수 성공 시 잔고 차감
           // 추가매수 시 익절/손절 기준 업데이트 (더 강한 신호면 기준 갱신)
           const prevMeta = positionMetas[target.code]
           if (!prevMeta || target.score > prevMeta.buyScore) {
@@ -390,13 +423,14 @@ const executeBuy = async (
       orderType: orderType as 'market' | 'limit' | 'pre-market' | 'after-close' | 'after-hours',
     }, config.mode)
 
-    dailyOrderCount++
+    const isSuccess = result.status === 'executed'
+    if (isSuccess) dailyOrderCount++
     const log: TradeLogEntry = {
       id: `${Date.now()}-${code}-buy`,
       timestamp: new Date().toISOString(),
       strategy: '자율 스캘핑',
       action: 'BUY', code, name, quantity, price, reason,
-      result: result.status === 'executed' ? 'success' : 'failed',
+      result: isSuccess ? 'success' : 'failed',
       message: result.message,
     }
     tradeLogs.push(log)
@@ -409,9 +443,11 @@ const executeBuy = async (
       try {
         // NXT 현재가 조회 → 정확한 가격으로 지정가 주문 (스캔가격은 KRX 기준이라 하한가 미달 가능)
         const nxtPrice = await getKisCurrentPrice(code, config.mode)
-        const nxtQty = Math.floor(config.maxPerTrade / nxtPrice)
+        // 원래 매수 수량 기준 유지 (maxPerTrade 전액 사용 방지)
+        const nxtInvest = Math.min(quantity * price, config.maxPerTrade)
+        const nxtQty = Math.floor(nxtInvest / nxtPrice)
         if (nxtQty <= 0) {
-          throw new Error(`NXT 현재가 ${nxtPrice}원 > 건당한도 ${config.maxPerTrade}원`)
+          throw new Error(`NXT 현재가 ${nxtPrice}원 > 투자금 ${nxtInvest}원`)
         }
         console.log(`[스캘핑] ${name} KRX 시간외 불가 → NXT 지정가(현재가 ${nxtPrice}원, ${nxtQty}주)로 재시도`)
 
@@ -422,14 +458,15 @@ const executeBuy = async (
           exchange: 'NXT',
         }, config.mode)
 
-        dailyOrderCount++
+        const nxtSuccess = nxtResult.status === 'executed'
+        if (nxtSuccess) dailyOrderCount++
         const log: TradeLogEntry = {
           id: `${Date.now()}-${code}-buy-nxt`,
           timestamp: new Date().toISOString(),
           strategy: '자율 스캘핑',
           action: 'BUY', code, name, quantity: nxtQty, price: nxtPrice,
           reason: reason + ' (NXT)',
-          result: nxtResult.status === 'executed' ? 'success' : 'failed',
+          result: nxtSuccess ? 'success' : 'failed',
           message: `[NXT] ${nxtResult.message}`,
         }
         tradeLogs.push(log)
@@ -475,13 +512,14 @@ const executeSell = async (
       orderType: orderType as 'market' | 'limit' | 'pre-market' | 'after-close' | 'after-hours',
     }, config.mode)
 
-    dailyOrderCount++
+    const sellSuccess = result.status === 'executed'
+    if (sellSuccess) dailyOrderCount++
     const log: TradeLogEntry = {
       id: `${Date.now()}-${code}-sell`,
       timestamp: new Date().toISOString(),
       strategy: '자율 스캘핑',
       action: 'SELL', code, name, quantity, price, reason,
-      result: result.status === 'executed' ? 'success' : 'failed',
+      result: sellSuccess ? 'success' : 'failed',
       message: result.message,
     }
     tradeLogs.push(log)
@@ -501,14 +539,15 @@ const executeSell = async (
           exchange: 'NXT',
         }, config.mode)
 
-        dailyOrderCount++
+        const nxtSellOk = nxtResult.status === 'executed'
+        if (nxtSellOk) dailyOrderCount++
         const log: TradeLogEntry = {
           id: `${Date.now()}-${code}-sell-nxt`,
           timestamp: new Date().toISOString(),
           strategy: '자율 스캘핑',
           action: 'SELL', code, name, quantity, price,
           reason: reason + ' (NXT)',
-          result: nxtResult.status === 'executed' ? 'success' : 'failed',
+          result: nxtSellOk ? 'success' : 'failed',
           message: `[NXT] ${nxtResult.message}`,
         }
         tradeLogs.push(log)

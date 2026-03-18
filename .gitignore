@@ -4,6 +4,7 @@
 .scalping-logs.json
 .scalping-stats.json
 .kis-tokens.json
+.custom-watchlist.json
 
 # dependencies
 /node_modules

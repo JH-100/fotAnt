@@ -423,6 +423,7 @@ export const getKisDailyPrices = async (
     }))
     .filter((p: DailyPrice) => p.close > 0)
     .slice(0, days)
+    .reverse()  // KIS는 최신→과거순 반환 → 과거→최신순으로 뒤집기 (지표 함수 요구사항)
 
   return prices
 }
@@ -527,7 +528,7 @@ export const getKisMinutePrices = async (
   return minutes
 }
 
-/** 1분봉 → N분봉으로 집계 */
+/** 1분봉 → N분봉으로 집계 (시간 기반 그룹핑 — 갭 시간대 정확 처리) */
 export const aggregateMinuteBars = (bars: MinutePrice[], intervalMin: number): MinutePrice[] => {
   if (bars.length === 0 || intervalMin <= 1) return bars
 
@@ -535,8 +536,25 @@ export const aggregateMinuteBars = (bars: MinutePrice[], intervalMin: number): M
   const sorted = [...bars].sort((a, b) => a.time.localeCompare(b.time))
   const result: MinutePrice[] = []
 
-  for (let i = 0; i < sorted.length; i += intervalMin) {
-    const chunk = sorted.slice(i, i + intervalMin)
+  // 시간 기반 그룹핑: HHmm → 분 변환 후 intervalMin 단위 버킷
+  const timeToMinutes = (t: string): number => {
+    const hh = parseInt(t.slice(0, 2), 10)
+    const mm = parseInt(t.slice(2, 4), 10)
+    return hh * 60 + mm
+  }
+  const bucketKey = (t: string): number => {
+    const mins = timeToMinutes(t)
+    return Math.floor(mins / intervalMin)
+  }
+
+  const buckets = new Map<number, MinutePrice[]>()
+  for (const bar of sorted) {
+    const key = bucketKey(bar.time)
+    if (!buckets.has(key)) buckets.set(key, [])
+    buckets.get(key)!.push(bar)
+  }
+
+  for (const [, chunk] of [...buckets.entries()].sort((a, b) => a[0] - b[0])) {
     if (chunk.length === 0) continue
     const first = chunk[0]!
     const last = chunk[chunk.length - 1]!

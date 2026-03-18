@@ -9,6 +9,26 @@ import {
   getRSISignal, getMACDSignal, getMASignal, getVolumeSignal,
 } from './indicators'
 import type { MinutePrice, DailyPrice } from '@/types/kis'
+import * as fs from 'fs'
+import * as path from 'path'
+
+// ─── 커스텀 워치리스트 파일 저장 ───
+const WATCHLIST_FILE = path.join(process.cwd(), '.custom-watchlist.json')
+
+const loadCustomWatchList = (): { code: string; name: string }[] => {
+  try {
+    const raw = fs.readFileSync(WATCHLIST_FILE, 'utf-8')
+    return JSON.parse(raw) ?? []
+  } catch { return [] }
+}
+
+const saveCustomWatchList = (list: { code: string; name: string }[]) => {
+  try {
+    fs.writeFileSync(WATCHLIST_FILE, JSON.stringify(list), 'utf-8')
+  } catch (err) {
+    console.log(`[스캐너] 워치리스트 저장 실패: ${err}`)
+  }
+}
 
 export interface ScanResult {
   code: string
@@ -392,8 +412,8 @@ const STOCK_MASTER: { code: string; name: string }[] = [
   { code: '041510', name: 'SM' },
 ]
 
-// 사용자가 추가한 커스텀 워치리스트 (런타임 동적 추가)
-const customWatchList: { code: string; name: string }[] = []
+// 사용자가 추가한 커스텀 워치리스트 (파일 저장으로 재시작 시 유지)
+const customWatchList: { code: string; name: string }[] = loadCustomWatchList()
 
 /** 커스텀 워치리스트에 종목 추가 (외부에서 호출) */
 export const addToWatchList = (code: string, name: string) => {
@@ -401,13 +421,17 @@ export const addToWatchList = (code: string, name: string) => {
   if (STOCK_MASTER.find(s => s.code === code)) return
   if (isETF(name)) return
   customWatchList.push({ code, name })
+  saveCustomWatchList(customWatchList)
   console.log(`[스캐너] 워치리스트 추가: ${name}(${code}) — 총 ${STOCK_MASTER.length + customWatchList.length}종목`)
 }
 
 /** 커스텀 워치리스트 제거 */
 export const removeFromWatchList = (code: string) => {
   const idx = customWatchList.findIndex(s => s.code === code)
-  if (idx !== -1) customWatchList.splice(idx, 1)
+  if (idx !== -1) {
+    customWatchList.splice(idx, 1)
+    saveCustomWatchList(customWatchList)
+  }
 }
 
 /** 현재 전체 워치리스트 조회 */
@@ -451,6 +475,7 @@ const getAIRecommendations = async (
 
         if (score <= 0.1) return null // BUY 신호만
 
+        // data는 과거→최신순 (kis-api에서 .reverse() 적용됨)
         const currentPrice = data[data.length - 1]?.close ?? 0
         const prevPrice = data[data.length - 2]?.close ?? 0
         const change = prevPrice > 0 ? ((currentPrice - prevPrice) / prevPrice) * 100 : 0
@@ -462,7 +487,7 @@ const getAIRecommendations = async (
     for (const r of batchResults) {
       if (r.status === 'fulfilled' && r.value) results.push(r.value)
     }
-    if (i + 3 < targets.length) await new Promise(resolve => setTimeout(resolve, 300))
+    if (i + batchSize < targets.length) await new Promise(resolve => setTimeout(resolve, 300))
   }
 
   return results.sort((a, b) => b.aiScore - a.aiScore)
