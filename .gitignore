@@ -1,8 +1,9 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# scalping logs (runtime)
+# scalping runtime data
 .scalping-logs.json
 .scalping-stats.json
+.kis-tokens.json
 
 # dependencies
 /node_modules

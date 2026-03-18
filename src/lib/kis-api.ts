@@ -38,9 +38,43 @@ export const isKisConfigured = (mode?: TradingMode): boolean => {
   return !!(process.env.KIS_APP_KEY || process.env.KIS_REAL_APP_KEY || process.env.KIS_MOCK_APP_KEY)
 }
 
-// ─── 토큰 캐시 (모드별 분리) + 동시 요청 중복 방지 ────
+// ─── 토큰 캐시 (모드별 분리) + 파일 저장 + 동시 요청 중복 방지 ────
 const tokenCaches: Record<string, { token: string; expiresAt: number }> = {}
 const tokenPending: Record<string, Promise<string> | undefined> = {}
+
+// 서버사이드에서만 토큰을 파일에 저장/복원 (24시간 유효 → 재시작해도 재사용)
+const TOKEN_FILE_PATH = '.kis-tokens.json'
+
+const loadTokensFromFile = () => {
+  if (typeof window !== 'undefined') return // 브라우저에서는 스킵
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+    const filePath = path.join(process.cwd(), TOKEN_FILE_PATH)
+    if (fs.existsSync(filePath)) {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+      for (const [mode, cache] of Object.entries(data)) {
+        const c = cache as { token: string; expiresAt: number }
+        if (c.token && c.expiresAt && Date.now() < c.expiresAt) {
+          tokenCaches[mode] = c
+          console.log(`[KIS] ${mode} 토큰 파일에서 복원 (만료: ${new Date(c.expiresAt).toLocaleTimeString('ko-KR')})`)
+        }
+      }
+    }
+  } catch { /* ignore */ }
+}
+
+const saveTokensToFile = () => {
+  if (typeof window !== 'undefined') return
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+    fs.writeFileSync(path.join(process.cwd(), TOKEN_FILE_PATH), JSON.stringify(tokenCaches), 'utf-8')
+  } catch { /* ignore */ }
+}
+
+// 서버 시작 시 토큰 복원
+loadTokensFromFile()
 
 /** OAuth 토큰 발급/갱신 — 동시 호출 시 1개만 실제 발급, 나머지는 대기 */
 const getToken = async (mode: TradingMode): Promise<string> => {
@@ -106,6 +140,7 @@ const getToken = async (mode: TradingMode): Promise<string> => {
       token: data.access_token as string,
       expiresAt: Date.now() + ((data.expires_in as number) - 3600) * 1000,
     }
+    saveTokensToFile()
     return data.access_token as string
   })()
 
