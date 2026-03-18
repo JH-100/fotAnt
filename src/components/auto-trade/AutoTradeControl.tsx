@@ -7,8 +7,8 @@ import useTradingStore from '@/store/trading-store'
 
 const AutoTradeControl = () => {
   const {
-    isRunning, setRunning, config, setConfig, addLogs,
-    setScanResults, setLastExecuted, setDailyStats, dailyStats,
+    isRunning, setRunning, config, setConfig,
+    dailyStats, updateFromServer,
   } = useAutoTradeStore()
   const dashboardMode = useTradingStore((s) => s.mode)
   const [password, setPassword] = useState('')
@@ -28,22 +28,24 @@ const AutoTradeControl = () => {
     }
   }, [dashboardMode, isRunning, config.mode, setConfig])
 
-  // 서버 상태 폴링 (10초 간격)
+  // 서버 상태 폴링 (10초 간격) — 한번에 업데이트하여 persist 충돌 방지
   const pollStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/auto-trade')
       const data = await res.json()
-      setRunning(data.isRunning ?? false)
-      if (data.logs?.length > 0) addLogs(data.logs)
-      if (data.scan?.length > 0) setScanResults(data.scan)
-      if (data.dailyStats) setDailyStats(data.dailyStats)
+
+      // Zustand set() 1회로 모든 상태 업데이트
+      updateFromServer({
+        isRunning: data.isRunning ?? false,
+        logs: data.logs,
+        scanResults: data.scan,
+        dailyStats: data.dailyStats,
+        config: data.isRunning && data.config?.mode ? { mode: data.config.mode } : undefined,
+      })
+
+      // 로컬 상태 (persist 안 함)
       if (data.startedAt) setStartedAt(data.startedAt)
       setLastError(data.lastError)
-      // 서버 모드 동기화 (서버가 실전으로 돌고 있으면 UI도 실전으로)
-      if (data.isRunning && data.config?.mode) {
-        setConfig({ mode: data.config.mode })
-      }
-      // 진단 정보
       setDiagnostics({
         scanCount: data.scan?.length ?? 0,
         buySignals: data.scan?.filter((s: { signal: string }) => s.signal === 'BUY')?.length ?? 0,
@@ -51,7 +53,7 @@ const AutoTradeControl = () => {
         lastCycleAt: data.lastCycleAt,
       })
     } catch { /* 네트워크 오류 무시 */ }
-  }, [setRunning, addLogs, setScanResults, setDailyStats, setConfig])
+  }, [updateFromServer])
 
   useEffect(() => {
     pollStatus() // 즉시 1회

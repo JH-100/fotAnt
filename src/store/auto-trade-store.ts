@@ -33,6 +33,14 @@ interface AutoTradeState {
   setScanResults: (results: ScanItem[]) => void
   setLastExecuted: (time: string) => void
   setDailyStats: (stats: { orders: number; pnl: number }) => void
+  /** 폴링 데이터를 한번에 업데이트 (persist 쓰기 1회로 줄임) */
+  updateFromServer: (data: {
+    isRunning?: boolean
+    logs?: TradeLogEntry[]
+    scanResults?: ScanItem[]
+    dailyStats?: { orders: number; pnl: number }
+    config?: Partial<ScalpingConfig>
+  }) => void
 }
 
 const useAutoTradeStore = create<AutoTradeState>()(
@@ -50,7 +58,6 @@ const useAutoTradeStore = create<AutoTradeState>()(
         set((state) => ({ config: { ...state.config, ...partial } })),
       addLogs: (newLogs) =>
         set((state) => {
-          // 중복 제거 (같은 id는 스킵)
           const existingIds = new Set(state.logs.map(l => l.id))
           const unique = newLogs.filter(l => !existingIds.has(l.id))
           if (unique.length === 0) return state
@@ -59,10 +66,42 @@ const useAutoTradeStore = create<AutoTradeState>()(
       setScanResults: (results) => set({ scanResults: results }),
       setLastExecuted: (time) => set({ lastExecuted: time }),
       setDailyStats: (stats) => set({ dailyStats: stats }),
+
+      // 폴링에서 한번에 업데이트 → persist 쓰기 1회
+      updateFromServer: (data) =>
+        set((state) => {
+          const updates: Partial<AutoTradeState> = {}
+
+          if (data.isRunning !== undefined) {
+            updates.isRunning = data.isRunning
+          }
+
+          if (data.logs && data.logs.length > 0) {
+            const existingIds = new Set(state.logs.map(l => l.id))
+            const unique = data.logs.filter(l => !existingIds.has(l.id))
+            if (unique.length > 0) {
+              updates.logs = [...unique, ...state.logs].slice(0, 200)
+            }
+          }
+
+          if (data.scanResults) {
+            updates.scanResults = data.scanResults
+          }
+
+          if (data.dailyStats) {
+            updates.dailyStats = data.dailyStats
+          }
+
+          if (data.config) {
+            updates.config = { ...state.config, ...data.config }
+          }
+
+          return updates
+        }),
     }),
     {
       name: 'auto-trade-storage',
-      // config만 persist (isRunning은 서버에서 폴링)
+      // config + logs만 persist (scanResults, dailyStats는 휘발성)
       partialize: (state) => ({
         config: state.config,
         logs: state.logs.slice(0, 50),
