@@ -1,29 +1,33 @@
-// 국내 주식 시세 API Route (토스증권 기반)
+// 국내 주식 시세 API Route (KIS 거래량 상위 종목 기반)
 import { NextResponse } from 'next/server'
-import { getTossStockPrices } from '@/lib/toss-invest'
-import { KR_STOCKS } from '@/constants/stocks'
+import { getKisVolumeRank, isKisConfigured } from '@/lib/kis-api'
 import type { StockQuote, ApiResponse } from '@/types/stock'
 
 export async function GET() {
   try {
-    const codes = KR_STOCKS.map((s) => s.code)
-    const result = await getTossStockPrices(codes)
+    if (!isKisConfigured()) {
+      return NextResponse.json(
+        { data: [], error: 'KIS API가 설정되지 않았습니다.' } satisfies ApiResponse<StockQuote[]>,
+        { status: 503 }
+      )
+    }
 
-    const quotes: StockQuote[] = result.prices.map((p) => {
-      const stock = KR_STOCKS.find((s) => `A${s.code}` === p.code)
-      const change = p.close - p.base
-      const changePercent = p.base > 0 ? (change / p.base) * 100 : 0
+    const raw = await getKisVolumeRank()
+
+    const quotes: StockQuote[] = raw.map((r) => {
+      const basePrice = Math.round(r.price / (1 + r.change / 100))
+      const change = r.price - basePrice
 
       return {
-        code: p.code,
-        name: stock?.name ?? p.code,
-        price: p.close,
-        basePrice: p.base,
+        code: `A${r.code}`,
+        name: r.name,
+        price: r.price,
+        basePrice,
         change,
-        changePercent,
-        changeType: p.changeType,
-        volume: p.volume,
-        lastUpdated: p.tradingEnd,
+        changePercent: r.change,
+        changeType: r.change > 0 ? 'UP' as const : r.change < 0 ? 'DOWN' as const : 'FLAT' as const,
+        volume: r.volume,
+        lastUpdated: new Date().toISOString(),
       }
     })
 

@@ -1,6 +1,6 @@
 'use client'
 
-// 주식 시세 조회 훅 (토스증권 기반)
+// 주식 시세 조회 훅 (KIS 거래량 상위 종목)
 import { useQuery } from '@tanstack/react-query'
 import { REFRESH_INTERVAL } from '@/constants/stocks'
 import type { StockQuote, ApiResponse } from '@/types/stock'

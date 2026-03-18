@@ -109,7 +109,7 @@ const UsStockRow = ({ item }: { item: RankingItem }) => {
 /** 국내 주식 컨텐츠 — 모니터링 + 랭킹 합산 */
 const KrStockContent = ({ filter, sortKey, sortDir }: { filter: Filter; sortKey: SortKey; sortDir: SortDir }) => {
   const { data: stocks, isLoading: stocksLoading, error: stocksError } = useStocks()
-  const { data: ranking, isLoading: rankingLoading } = useRanking({ category: '토스증권 거래대금', market: 'kr' })
+  const { data: ranking, isLoading: rankingLoading } = useRanking({ category: '거래량' })
 
   const filtered = useMemo(() => {
     // 모니터링 종목
@@ -168,9 +168,9 @@ const KrStockContent = ({ filter, sortKey, sortDir }: { filter: Filter; sortKey:
   )
 }
 
-/** 미국 주식 컨텐츠 (토스 랭킹 market=us) */
+/** 미국 주식 컨텐츠 (KIS 랭킹) */
 const UsStockContent = ({ sortKey, sortDir }: { sortKey: SortKey; sortDir: SortDir }) => {
-  const { data, isLoading, error } = useRanking({ category: '토스증권 거래대금', market: 'us' })
+  const { data, isLoading, error } = useRanking({ category: '거래량', market: 'us' })
 
   const sorted = useMemo(() => {
     if (!data?.items) return []
@@ -237,7 +237,7 @@ const StockTable = () => {
           <div className="h-5 w-1 rounded-full bg-gradient-to-b from-emerald-400 to-blue-500" />
           <h3 className="font-semibold">주식 모니터링</h3>
           <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-muted-foreground">
-            토스증권
+            한국투자증권
           </span>
         </div>
         <div className="flex gap-1">

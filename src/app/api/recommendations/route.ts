@@ -1,22 +1,13 @@
-// 주식 추천 API
+// 주식 추천 API — KIS 거래량 상위 종목 기반
 import { NextResponse } from 'next/server'
-import { isKisConfigured, getKisDailyPrices } from '@/lib/kis-api'
+import { isKisConfigured, getKisDailyPrices, getKisVolumeRank } from '@/lib/kis-api'
 import { analyzeStocks } from '@/lib/recommendation-engine'
 
-// 토스 랭킹에서 인기 종목 가져오기
+// KIS 거래량 상위 종목에서 인기 종목 가져오기
 const getPopularStocks = async (): Promise<{ code: string; name: string }[]> => {
   try {
-    const res = await fetch(
-      'https://wts-info-api.tossinvest.com/api/v2/ranking?category=%ED%86%A0%EC%8A%A4%EC%A6%9D%EA%B6%8C%20%EA%B1%B0%EB%9E%98%EB%8C%80%EA%B8%88&market=kr',
-      { next: { revalidate: 300 } }
-    )
-    if (!res.ok) return getDefaultStocks()
-    const data = await res.json()
-    const items = (data.result ?? []).slice(0, 10)
-    return items.map((item: Record<string, string>) => ({
-      code: item.symbolCode?.replace('KR:', '') ?? '',
-      name: item.name ?? '',
-    })).filter((s: { code: string }) => s.code)
+    const rank = await getKisVolumeRank()
+    return rank.slice(0, 10).map((r) => ({ code: r.code, name: r.name }))
   } catch {
     return getDefaultStocks()
   }

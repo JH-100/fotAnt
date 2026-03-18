@@ -27,7 +27,7 @@ const OrderForm = ({ mode = 'real' }: { mode?: 'real' | 'mock' }) => {
   const { openConfirm, isConfirmOpen, pendingOrder, closeConfirm } = useTradingStore()
 
   const { data: stocks } = useStocks()
-  const { data: ranking } = useRanking({ category: '토스증권 거래대금', market: 'kr' })
+  const { data: ranking } = useRanking({ category: '거래량' })
 
   // URL 파라미터에서 종목코드
   useEffect(() => {

@@ -1,5 +1,5 @@
 // 한국투자증권(KIS) OpenAPI 클라이언트 — 실전/모의 듀얼 모드 지원
-import type { KisToken, KisBalance, KisHolding, KisOrder, KisOrderRequest, DailyPrice } from '@/types/kis'
+import type { KisToken, KisBalance, KisHolding, KisOrder, KisOrderRequest, DailyPrice, MinutePrice } from '@/types/kis'
 
 export type TradingMode = 'real' | 'mock'
 
@@ -423,4 +423,82 @@ export const getKisVolumeRank = async (mode?: TradingMode): Promise<VolumeRankIt
     volume: parseInt(item.acml_vol ?? '0', 10),
     tradingValue: Math.round(parseInt(item.acml_tr_pbmn ?? '0', 10) / 1_000_000),
   }))
+}
+
+// ─── 당일 분봉 조회 (스캘핑 단기지표용) ──────────────
+
+/** KIS 당일 분봉 조회 — 1분봉 데이터를 가져와서 지정 간격으로 집계 */
+export const getKisMinutePrices = async (
+  code: string,
+  mode?: TradingMode
+): Promise<MinutePrice[]> => {
+  const m = mode ?? defaultMode()
+  const headers = await getHeaders(m, 'FHKST03010200')
+  const cfg = getModeConfig(m)
+
+  // 현재 시각 기준 조회 (HHMMSS)
+  const now = new Date()
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000)
+  const hh = String(kst.getUTCHours()).padStart(2, '0')
+  const mm = String(kst.getUTCMinutes()).padStart(2, '0')
+  const endTime = `${hh}${mm}00`
+
+  const params = new URLSearchParams({
+    FID_ETC_CLS_CODE: '',
+    FID_COND_MRKT_DIV_CODE: 'J',
+    FID_INPUT_ISCD: code,
+    FID_INPUT_HOUR_1: endTime,
+    FID_PW_DATA_INCU_YN: 'N',
+  })
+
+  const res = await fetch(
+    `${cfg.baseUrl}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice?${params.toString()}`,
+    { headers }
+  )
+
+  if (!res.ok) throw new Error(`KIS 분봉 조회 실패: ${res.status}`)
+  const data = await res.json()
+  if (data.rt_cd !== '0') throw new Error(`KIS 분봉 오류: ${data.msg1}`)
+
+  const minutes: MinutePrice[] = (data.output2 ?? [])
+    .map((item: Record<string, string>) => ({
+      time: item.stck_cntg_hour ?? '',
+      open: parseInt(item.stck_oprc ?? '0', 10),
+      high: parseInt(item.stck_hgpr ?? '0', 10),
+      low: parseInt(item.stck_lwpr ?? '0', 10),
+      close: parseInt(item.stck_prpr ?? '0', 10),
+      volume: parseInt(item.cntg_vol ?? '0', 10),
+      cumVolume: parseInt(item.acml_vol ?? '0', 10),
+    }))
+    .filter((p: MinutePrice) => p.close > 0)
+
+  return minutes
+}
+
+/** 1분봉 → N분봉으로 집계 */
+export const aggregateMinuteBars = (bars: MinutePrice[], intervalMin: number): MinutePrice[] => {
+  if (bars.length === 0 || intervalMin <= 1) return bars
+
+  // 시간순 정렬 (오래된것 먼저)
+  const sorted = [...bars].sort((a, b) => a.time.localeCompare(b.time))
+  const result: MinutePrice[] = []
+
+  for (let i = 0; i < sorted.length; i += intervalMin) {
+    const chunk = sorted.slice(i, i + intervalMin)
+    if (chunk.length === 0) continue
+    const first = chunk[0]!
+    const last = chunk[chunk.length - 1]!
+
+    result.push({
+      time: first.time,
+      open: first.open,
+      high: Math.max(...chunk.map(c => c.high)),
+      low: Math.min(...chunk.map(c => c.low)),
+      close: last.close,
+      volume: chunk.reduce((sum, c) => sum + c.volume, 0),
+      cumVolume: last.cumVolume,
+    })
+  }
+
+  return result
 }

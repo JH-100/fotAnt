@@ -1,6 +1,6 @@
 'use client'
 
-// 토스증권 랭킹 — 글래스모피즘
+// KIS 거래량 랭킹 — 글래스모피즘
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -69,8 +69,8 @@ const RankRow = ({ item }: { item: RankingItem }) => {
 }
 
 /** 카테고리별 랭킹 */
-const RankingContent = ({ category, market }: { category: string; market: string }) => {
-  const { data, isLoading, error } = useRanking({ category, market })
+const RankingContent = ({ category }: { category: string }) => {
+  const { data, isLoading, error } = useRanking({ category })
 
   if (error) {
     return (
@@ -107,8 +107,6 @@ const RankingContent = ({ category, market }: { category: string; market: string
 }
 
 const RankingTable = () => {
-  const [market, setMarket] = useState('all')
-
   return (
     <div className="glass rounded-2xl">
       {/* 헤더 */}
@@ -117,42 +115,22 @@ const RankingTable = () => {
           <div className="h-5 w-1 rounded-full bg-gradient-to-b from-violet-400 to-rose-500" />
           <h3 className="font-semibold">실시간 랭킹</h3>
           <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-muted-foreground">
-            토스증권
+            한국투자증권
           </span>
-        </div>
-        <div className="flex gap-1">
-          {[
-            { value: 'all', label: '전체' },
-            { value: 'kr', label: '국내' },
-            { value: 'us', label: '미국' },
-          ].map((m) => (
-            <button
-              key={m.value}
-              onClick={() => setMarket(m.value)}
-              className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${
-                market === m.value
-                  ? 'bg-white/10 text-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {m.label}
-            </button>
-          ))}
         </div>
       </div>
 
       {/* 탭 + 컨텐츠 */}
       <div className="p-4">
-        <Tabs defaultValue="토스증권 거래대금">
+        <Tabs defaultValue="거래량">
           <TabsList className="mb-3 w-full">
-            <TabsTrigger value="토스증권 거래대금" className="flex-1">거래대금</TabsTrigger>
-            <TabsTrigger value="토스증권 거래량" className="flex-1">거래량</TabsTrigger>
+            <TabsTrigger value="거래량" className="flex-1">거래량</TabsTrigger>
             <TabsTrigger value="급상승" className="flex-1">급상승</TabsTrigger>
             <TabsTrigger value="급하락" className="flex-1">급하락</TabsTrigger>
           </TabsList>
-          {['토스증권 거래대금', '토스증권 거래량', '급상승', '급하락'].map((cat) => (
+          {['거래량', '급상승', '급하락'].map((cat) => (
             <TabsContent key={cat} value={cat}>
-              <RankingContent category={cat} market={market} />
+              <RankingContent category={cat} />
             </TabsContent>
           ))}
         </Tabs>

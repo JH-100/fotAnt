@@ -61,6 +61,17 @@ export interface DailyPrice {
   volume: number
 }
 
+/** 분봉 시세 (스캘핑 단기지표용) */
+export interface MinutePrice {
+  time: string        // HHMMSS
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number      // 해당 봉 체결량
+  cumVolume: number   // 누적 거래량
+}
+
 /** 기술 신호 */
 export interface TechnicalSignal {
   indicator: string

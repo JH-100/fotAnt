@@ -22,7 +22,7 @@ const DashboardPage = () => {
           주식자동화
         </h1>
         <p className="text-sm text-muted-foreground">
-          실시간 환율 · 국내주식 · 토스증권 랭킹 모니터링
+          실시간 환율 · 국내주식 · KIS 거래량 랭킹 모니터링
         </p>
       </header>
 

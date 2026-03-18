@@ -140,8 +140,8 @@ const SettingsPage = () => {
         <div className="space-y-2">
           {[
             { name: '환율', source: 'Frankfurter (ECB)', status: 'active' },
-            { name: '국내주식', source: '토스증권 비공식 API', status: 'active' },
-            { name: '랭킹', source: '토스증권 랭킹 API', status: 'active' },
+            { name: '국내주식', source: 'KIS OpenAPI (거래량 상위)', status: 'active' },
+            { name: '랭킹', source: 'KIS OpenAPI (거래량 순위)', status: 'active' },
             { name: '실전매매', source: 'KIS OpenAPI (실전)', status: realStatus === 'connected' ? 'active' : 'inactive' },
             { name: '모의매매', source: 'KIS OpenAPI (모의)', status: mockStatus === 'connected' ? 'active' : 'inactive' },
           ].map((ds) => (

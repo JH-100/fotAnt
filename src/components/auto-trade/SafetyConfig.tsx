@@ -147,24 +147,25 @@ const ScalpingConfigPanel = () => {
         <div className="rounded-xl bg-emerald-500/10 p-3">
           <p className="mb-1 text-[11px] font-medium text-emerald-300">🎯 익절 — 봇이 자동 결정</p>
           <p className="text-[10px] text-emerald-300/70">
-            ATR(평균진폭) 기반으로 종목별 변동성을 분석하여 익절 목표를 설정합니다.
-            변동성 큰 종목은 넓게(~8%), 안정적 종목은 좁게(~1%) 잡습니다.
+            5분봉 ATR(평균진폭) 기반으로 종목별 단기 변동성을 분석하여 익절 목표를 설정합니다.
+            변동성 큰 종목은 넓게(~4%), 안정적 종목은 좁게(~0.5%) 잡습니다.
             강한 매수 신호일수록 더 높은 익절 목표를 설정합니다.
           </p>
         </div>
         <div className="rounded-xl bg-rose-500/10 p-3">
           <p className="mb-1 text-[11px] font-medium text-rose-300">🛑 손절 — 봇이 자동 결정</p>
           <p className="text-[10px] text-rose-300/70">
-            ATR 기반으로 종목별 손절선을 설정합니다 (1.5%~5%).
+            분봉 ATR 기반으로 종목별 손절선을 설정합니다 (0.3%~2.5%).
             매수 점수가 낮았던 종목은 -1%만 하락해도 조기 탈출합니다.
           </p>
         </div>
         <div className="rounded-xl bg-violet-500/10 p-3">
-          <p className="mb-1 text-[11px] font-medium text-violet-300">🔍 종목 탐색 — 봇이 자동 결정</p>
+          <p className="mb-1 text-[11px] font-medium text-violet-300">🔍 종목 탐색 — 분봉 단기지표 + AI 추천</p>
           <p className="text-[10px] text-violet-300/70">
-            토스증권 거래대금 상위 30종목을 실시간 스캔합니다.
-            RSI · MACD · 볼린저밴드 · 거래량 · 이평선 5개 지표로 점수를 매기고,
-            기준 점수 이상인 종목만 매수합니다.
+            KIS 거래량 상위 30종목 + AI 추천 종목(최대 5개)의 분봉 데이터를 실시간 분석합니다.
+            5분봉 RSI(7) · 단기MACD(6,13,5) · VWAP · 거래량급등 · 체결강도 · 눌림목 패턴 ·
+            볼린저밴드(10) · 단기이평선(3/7)으로 점수를 매기고, 기준 점수 이상인 종목만 매수합니다.
+            AI 추천은 일봉 기술분석으로 거래량순위 밖의 우량 종목을 추가 발굴합니다.
           </p>
         </div>
       </div>

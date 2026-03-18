@@ -1,9 +1,9 @@
 // 자율 스캘핑 엔진 — 종목 탐색 + 동적 익절/손절 전부 봇이 결정
 import type { KisBalance } from '@/types/kis'
-import { getKisBalance, getKisDailyPrices, placeKisOrder } from './kis-api'
+import { getKisBalance, getKisMinutePrices, aggregateMinuteBars, placeKisOrder } from './kis-api'
 import type { TradingMode } from './kis-api'
 import { scanMarket, type ScanResult } from './stock-scanner'
-import { calcATR } from './indicators'
+import { calcMinuteATR } from './indicators'
 import type { TradeLogEntry } from './strategies/types'
 
 export interface ScalpingConfig {
@@ -89,7 +89,7 @@ const getOrderType = (): string => {
   return 'market'
 }
 
-/** 보유종목의 동적 익절/손절 기준 실시간 계산 (매수 시 저장값 없으면 ATR로) */
+/** 보유종목의 동적 익절/손절 기준 실시간 계산 (매수 시 저장값 없으면 분봉 ATR로) */
 const getExitThresholds = async (code: string, currentPrice: number, mode?: TradingMode): Promise<{ tp: number; sl: number }> => {
   // 매수 시 저장한 기준이 있으면 사용
   const meta = positionMetas[code]
@@ -97,22 +97,22 @@ const getExitThresholds = async (code: string, currentPrice: number, mode?: Trad
     return { tp: meta.takeProfitPercent, sl: meta.stopLossPercent }
   }
 
-  // 없으면 실시간으로 ATR 계산
+  // 없으면 분봉 ATR로 실시간 계산
   try {
-    const data = await getKisDailyPrices(code, 30, mode)
-    if (data.length >= 15) {
-      const atrArr = calcATR(data, 14)
-      const atr = atrArr[atrArr.length - 1] ?? 0
-      const atrPct = currentPrice > 0 ? (atr / currentPrice) * 100 : 2
+    const rawBars = await getKisMinutePrices(code, mode)
+    if (rawBars.length >= 15) {
+      const bars5 = aggregateMinuteBars(rawBars, 5)
+      const atr = calcMinuteATR(bars5, 10)
+      const atrPct = currentPrice > 0 ? (atr / currentPrice) * 100 : 1
       return {
-        tp: Math.max(1, Math.min(8, atrPct * 1.8)),
-        sl: Math.max(1.5, Math.min(5, atrPct * 1.2)),
+        tp: Math.max(0.5, Math.min(4, atrPct * 3)),
+        sl: Math.max(0.3, Math.min(2.5, atrPct * 2)),
       }
     }
   } catch { /* fallback */ }
 
-  // 기본값
-  return { tp: 2, sl: 3 }
+  // 기본값 (스캘핑용 타이트)
+  return { tp: 1.5, sl: 1 }
 }
 
 /** 잔고 조회 (최대 2회 재시도) */

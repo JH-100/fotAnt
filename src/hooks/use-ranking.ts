@@ -1,6 +1,6 @@
 'use client'
 
-// 토스증권 랭킹 조회 훅
+// KIS 거래량 랭킹 조회 훅
 import { useQuery } from '@tanstack/react-query'
 import { REFRESH_INTERVAL } from '@/constants/stocks'
 import type { RankingItem, ApiResponse } from '@/types/stock'

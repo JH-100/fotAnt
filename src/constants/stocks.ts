@@ -8,7 +8,7 @@ export const EXCHANGE_PAIRS = [
   { from: 'CNY', to: 'KRW', label: '위안/원' },
 ] as const
 
-/** 모니터링할 국내 주식 (토스증권 코드: A + 종목코드) */
+/** 모니터링할 국내 주식 (코드: A + 종목코드) */
 export const KR_STOCKS = [
   // 대형주
   { code: '005930', name: '삼성전자' },

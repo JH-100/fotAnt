@@ -11,7 +11,7 @@ export interface ExchangeRate {
   changePercent: number
 }
 
-/** 주식 시세 데이터 (토스증권 기반) */
+/** 주식 시세 데이터 */
 export interface StockQuote {
   code: string
   name: string
@@ -25,7 +25,7 @@ export interface StockQuote {
   logoUrl?: string
 }
 
-/** 토스 랭킹 아이템 */
+/** 랭킹 아이템 */
 export interface RankingItem {
   rank: number
   code: string

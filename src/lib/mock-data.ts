@@ -1,4 +1,4 @@
-// 환율 목업 데이터 (환율 전용 토스 API가 없으므로 임시 사용)
+// 환율 목업 데이터 (Frankfurter API 실패 시 대체용)
 import type { ExchangeRate } from '@/types/stock'
 
 export const MOCK_EXCHANGE_RATES: ExchangeRate[] = [
