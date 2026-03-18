@@ -14,7 +14,7 @@ export const STRATEGIES: Record<string, TradingStrategy> = {
   momentum: momentumStrategy,
 }
 
-/** 장 운영시간 체크 (KST 09:00 ~ 15:30) */
+/** 장 운영시간 체크 (프리마켓 07:00 ~ 정규장 ~ 애프터마켓 20:00 KST) */
 export const isMarketOpen = (): boolean => {
   const now = new Date()
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000)
@@ -26,7 +26,7 @@ export const isMarketOpen = (): boolean => {
   if (day === 0 || day === 6) return false
 
   const time = hours * 100 + minutes
-  return time >= 900 && time <= 1530
+  return time >= 700 && time <= 2000
 }
 
 /** 일일 주문 카운터 */

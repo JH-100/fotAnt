@@ -114,6 +114,38 @@ export const calcBollingerBands = (
   return { upper, middle, lower }
 }
 
+/** ATR (평균진폭) — 변동성 측정 */
+export const calcATR = (data: DailyPrice[], period: number = 14): number[] => {
+  const result: number[] = [0]
+  const trueRanges: number[] = []
+
+  for (let i = 1; i < data.length; i++) {
+    const high = data[i]?.high ?? 0
+    const low = data[i]?.low ?? 0
+    const prevClose = data[i - 1]?.close ?? 0
+    const tr = Math.max(
+      high - low,
+      Math.abs(high - prevClose),
+      Math.abs(low - prevClose)
+    )
+    trueRanges.push(tr)
+  }
+
+  // 초기 ATR
+  if (trueRanges.length < period) return result
+  let atr = trueRanges.slice(0, period).reduce((a, b) => a + b, 0) / period
+  for (let i = 0; i < period; i++) result.push(NaN)
+  result.push(atr)
+
+  // 스무딩
+  for (let i = period; i < trueRanges.length; i++) {
+    atr = (atr * (period - 1) + (trueRanges[i] ?? 0)) / period
+    result.push(atr)
+  }
+
+  return result
+}
+
 /** RSI 신호 분석 */
 export const getRSISignal = (data: DailyPrice[]): TechnicalSignal => {
   const closes = data.map((d) => d.close)

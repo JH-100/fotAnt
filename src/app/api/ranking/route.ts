@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
 
     const result = await getTossRanking(categoryId, duration, market)
 
-    const items: RankingItem[] = result.products.slice(0, 20).map((p) => {
+    const items: RankingItem[] = result.products.slice(0, 50).map((p) => {
       const change = p.price.close - p.price.base
       const changePercent = p.price.base > 0 ? (change / p.price.base) * 100 : 0
       const changeType: 'UP' | 'DOWN' | 'FLAT' =

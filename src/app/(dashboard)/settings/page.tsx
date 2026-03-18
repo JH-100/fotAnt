@@ -1,23 +1,40 @@
 'use client'
 
-// 설정 페이지
+// 설정 페이지 — 듀얼 모드 지원
 import { useState, useEffect } from 'react'
 
 const SettingsPage = () => {
-  const [status, setStatus] = useState<'loading' | 'connected' | 'disconnected'>('loading')
-  const [mockMode, setMockMode] = useState(true)
+  const [realStatus, setRealStatus] = useState<'loading' | 'connected' | 'disconnected'>('loading')
+  const [mockStatus, setMockStatus] = useState<'loading' | 'connected' | 'disconnected'>('loading')
 
   useEffect(() => {
-    // KIS API 연결 상태 확인
-    fetch('/api/kis/balance')
-      .then((res) => {
-        setStatus(res.ok ? 'connected' : 'disconnected')
-      })
-      .catch(() => setStatus('disconnected'))
+    // 실전 API 연결 확인
+    fetch('/api/kis/balance?mode=real')
+      .then((res) => setRealStatus(res.ok ? 'connected' : 'disconnected'))
+      .catch(() => setRealStatus('disconnected'))
 
-    // 모의투자 모드 확인
-    setMockMode(true) // 서버 환경변수이므로 클라이언트에서는 기본값
+    // 모의 API 연결 확인
+    fetch('/api/kis/balance?mode=mock')
+      .then((res) => setMockStatus(res.ok ? 'connected' : 'disconnected'))
+      .catch(() => setMockStatus('disconnected'))
   }, [])
+
+  const StatusBadge = ({ status }: { status: 'loading' | 'connected' | 'disconnected' }) => (
+    <div className="flex items-center gap-2">
+      <div
+        className={`h-2.5 w-2.5 rounded-full ${
+          status === 'loading'
+            ? 'animate-pulse bg-amber-400'
+            : status === 'connected'
+              ? 'bg-emerald-400'
+              : 'bg-rose-400'
+        }`}
+      />
+      <span className="text-sm">
+        {status === 'loading' ? '확인 중...' : status === 'connected' ? '연결됨' : '미연결'}
+      </span>
+    </div>
+  )
 
   return (
     <div className="mx-auto max-w-3xl space-y-8 px-4 py-8 sm:px-6 lg:px-8">
@@ -37,37 +54,30 @@ const SettingsPage = () => {
           <h3 className="font-semibold">한국투자증권 API</h3>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div className="flex items-center justify-between rounded-xl bg-white/[0.03] p-4">
             <div>
-              <p className="text-sm font-medium">연결 상태</p>
-              <p className="text-xs text-muted-foreground">KIS OpenAPI 인증</p>
+              <p className="text-sm font-medium">실전투자</p>
+              <p className="text-xs text-muted-foreground">KIS_REAL_APP_KEY / KIS_REAL_ACCOUNT_NO</p>
             </div>
-            <div className="flex items-center gap-2">
-              <div
-                className={`h-2.5 w-2.5 rounded-full ${
-                  status === 'loading'
-                    ? 'animate-pulse bg-amber-400'
-                    : status === 'connected'
-                      ? 'bg-emerald-400'
-                      : 'bg-rose-400'
-                }`}
-              />
-              <span className="text-sm">
-                {status === 'loading' ? '확인 중...' : status === 'connected' ? '연결됨' : '미연결'}
-              </span>
-            </div>
+            <StatusBadge status={realStatus} />
           </div>
 
           <div className="flex items-center justify-between rounded-xl bg-white/[0.03] p-4">
             <div>
-              <p className="text-sm font-medium">모의투자 모드</p>
-              <p className="text-xs text-muted-foreground">실전투자 전 테스트용</p>
+              <p className="text-sm font-medium">모의투자</p>
+              <p className="text-xs text-muted-foreground">KIS_MOCK_APP_KEY / KIS_MOCK_ACCOUNT_NO</p>
             </div>
-            <span className={`rounded-full px-3 py-1 text-xs font-medium ${
-              mockMode ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400'
-            }`}>
-              {mockMode ? '모의투자' : '실전투자'}
+            <StatusBadge status={mockStatus} />
+          </div>
+
+          <div className="flex items-center justify-between rounded-xl bg-white/[0.03] p-4">
+            <div>
+              <p className="text-sm font-medium">주문 비밀번호</p>
+              <p className="text-xs text-muted-foreground">실전투자 주문 시 필수 (TRADING_PASSWORD)</p>
+            </div>
+            <span className="rounded-full bg-rose-500/20 px-3 py-1 text-xs font-medium text-rose-400">
+              🔒 보호됨
             </span>
           </div>
         </div>
@@ -87,10 +97,16 @@ const SettingsPage = () => {
 
           <div className="rounded-xl bg-white/[0.03] p-4 font-mono text-xs">
             <div className="space-y-1 text-muted-foreground">
-              <p><span className="text-blue-400">KIS_APP_KEY</span>=발급받은_앱키</p>
-              <p><span className="text-blue-400">KIS_APP_SECRET</span>=발급받은_시크릿</p>
-              <p><span className="text-blue-400">KIS_ACCOUNT_NO</span>=계좌번호-상품코드</p>
-              <p><span className="text-blue-400">KIS_MOCK_MODE</span>=true</p>
+              <p className="text-[10px] text-amber-400/60"># ━━ 실전투자 ━━</p>
+              <p><span className="text-blue-400">KIS_REAL_APP_KEY</span>=실전_앱키</p>
+              <p><span className="text-blue-400">KIS_REAL_APP_SECRET</span>=실전_시크릿</p>
+              <p><span className="text-blue-400">KIS_REAL_ACCOUNT_NO</span>=계좌번호-01</p>
+              <p className="mt-2 text-[10px] text-amber-400/60"># ━━ 모의투자 ━━</p>
+              <p><span className="text-blue-400">KIS_MOCK_APP_KEY</span>=모의_앱키</p>
+              <p><span className="text-blue-400">KIS_MOCK_APP_SECRET</span>=모의_시크릿</p>
+              <p><span className="text-blue-400">KIS_MOCK_ACCOUNT_NO</span>=모의계좌-01</p>
+              <p className="mt-2 text-[10px] text-amber-400/60"># ━━ 보안 ━━</p>
+              <p><span className="text-rose-400">TRADING_PASSWORD</span>=실전주문비밀번호</p>
             </div>
           </div>
 
@@ -100,9 +116,16 @@ const SettingsPage = () => {
               <li>한국투자증권 API 포털 접속 (apiportal.koreainvestment.com)</li>
               <li>회원가입 후 한국투자증권 계좌 연결</li>
               <li>&ldquo;API 신청&rdquo; 메뉴에서 App Key / App Secret 발급</li>
-              <li>모의투자 신청 (실전투자 전 테스트용)</li>
+              <li>실전 + 모의투자 각각 별도 발급</li>
               <li><code className="rounded bg-white/[0.06] px-1 py-0.5">.env.local</code>에 키 입력 후 서버 재시작</li>
             </ol>
+          </div>
+
+          <div className="mt-4 rounded-xl bg-rose-500/10 p-3">
+            <p className="text-xs text-rose-400">
+              ⚠️ 같은 네트워크의 사용자도 모의투자는 자유롭게 사용 가능하지만,
+              실전투자 주문은 반드시 비밀번호를 알아야 실행됩니다.
+            </p>
           </div>
         </div>
       </div>
@@ -119,7 +142,8 @@ const SettingsPage = () => {
             { name: '환율', source: 'Frankfurter (ECB)', status: 'active' },
             { name: '국내주식', source: '토스증권 비공식 API', status: 'active' },
             { name: '랭킹', source: '토스증권 랭킹 API', status: 'active' },
-            { name: '매매', source: 'KIS OpenAPI', status: status === 'connected' ? 'active' : 'inactive' },
+            { name: '실전매매', source: 'KIS OpenAPI (실전)', status: realStatus === 'connected' ? 'active' : 'inactive' },
+            { name: '모의매매', source: 'KIS OpenAPI (모의)', status: mockStatus === 'connected' ? 'active' : 'inactive' },
           ].map((ds) => (
             <div key={ds.name} className="flex items-center justify-between rounded-lg px-3 py-2">
               <div>

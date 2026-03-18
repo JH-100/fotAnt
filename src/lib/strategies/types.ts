@@ -38,7 +38,7 @@ export const DEFAULT_SAFETY: SafetyConfig = {
   maxDailyLossPercent: 3,
   stopLossPercent: 5,
   maxDailyOrders: 10,
-  investPerTrade: 100_000,
+  investPerTrade: 100000,
 }
 
 /** 매매 로그 */

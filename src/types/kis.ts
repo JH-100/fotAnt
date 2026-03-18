@@ -35,7 +35,7 @@ export interface KisOrderRequest {
   code: string
   quantity: number
   price?: number
-  orderType: 'market' | 'limit'
+  orderType: 'market' | 'limit' | 'pre-market' | 'after-close' | 'after-hours'
 }
 
 /** 주문 결과 */

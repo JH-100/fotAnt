@@ -1,139 +1,175 @@
 'use client'
 
-// 안전 설정 패널
+// 스캘핑 설정 패널 — 봇이 익절/손절 자동 결정
 import useAutoTradeStore from '@/store/auto-trade-store'
+import useTradingStore from '@/store/trading-store'
 
-const SafetyConfigPanel = () => {
-  const { safety, setSafety, isRunning, targetStocks, setTargetStocks } = useAutoTradeStore()
+/** 숫자 스텝 컨트롤 */
+const StepControl = ({
+  label, value, format, step, min, max, disabled, onChange,
+}: {
+  label: string; value: number; format: (v: number) => string
+  step: number; min: number; max: number; disabled: boolean
+  onChange: (v: number) => void
+}) => (
+  <div className="flex items-center justify-between rounded-xl bg-white/[0.03] px-4 py-3">
+    <span className="text-xs text-muted-foreground">{label}</span>
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        disabled={disabled || value <= min}
+        onClick={() => onChange(Math.max(min, value - step))}
+        className="flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 text-sm transition-colors hover:bg-white/[0.06] disabled:opacity-30"
+      >-</button>
+      <span className="w-16 text-center font-mono text-sm font-medium tabular-nums">
+        {format(value)}
+      </span>
+      <button
+        type="button"
+        disabled={disabled || value >= max}
+        onClick={() => onChange(Math.min(max, value + step))}
+        className="flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 text-sm transition-colors hover:bg-white/[0.06] disabled:opacity-30"
+      >+</button>
+    </div>
+  </div>
+)
 
-  const configs = [
-    {
-      label: '건당 투자금액',
-      key: 'investPerTrade' as const,
-      value: safety.investPerTrade,
-      suffix: '원',
-      step: 50000,
-      min: 10000,
-      max: 10_000_000,
-      format: (v: number) => v.toLocaleString() + '원',
-    },
-    {
-      label: '포지션 한도',
-      key: 'maxPositionPercent' as const,
-      value: safety.maxPositionPercent,
-      suffix: '%',
-      step: 5,
-      min: 5,
-      max: 50,
-      format: (v: number) => v + '%',
-    },
-    {
-      label: '일일 손실 한도',
-      key: 'maxDailyLossPercent' as const,
-      value: safety.maxDailyLossPercent,
-      suffix: '%',
-      step: 1,
-      min: 1,
-      max: 10,
-      format: (v: number) => v + '%',
-    },
-    {
-      label: '손절선',
-      key: 'stopLossPercent' as const,
-      value: safety.stopLossPercent,
-      suffix: '%',
-      step: 1,
-      min: 1,
-      max: 20,
-      format: (v: number) => '-' + v + '%',
-    },
-    {
-      label: '일일 최대 주문',
-      key: 'maxDailyOrders' as const,
-      value: safety.maxDailyOrders,
-      suffix: '회',
-      step: 1,
-      min: 1,
-      max: 50,
-      format: (v: number) => v + '회',
-    },
-  ]
-
-  const handleRemoveStock = (code: string) => {
-    setTargetStocks(targetStocks.filter((s) => s.code !== code))
-  }
-
-  const handleAddStock = () => {
-    const code = prompt('종목코드 입력 (예: 005930)')
-    const name = code ? prompt('종목명 입력 (예: 삼성전자)') : null
-    if (code && name) {
-      setTargetStocks([...targetStocks, { code, name }])
-    }
-  }
+const ScalpingConfigPanel = () => {
+  const { config, setConfig, isRunning } = useAutoTradeStore()
+  const setDashboardMode = useTradingStore((s) => s.setMode)
 
   return (
     <div className="glass rounded-2xl p-6">
       <div className="mb-6 flex items-center gap-3">
         <div className="h-5 w-1 rounded-full bg-gradient-to-b from-rose-400 to-orange-500" />
-        <h3 className="font-semibold">안전 설정</h3>
+        <h3 className="font-semibold">스캘핑 설정</h3>
       </div>
 
-      {/* 안전 파라미터 */}
-      <div className="space-y-4">
-        {configs.map((c) => (
-          <div key={c.key}>
-            <div className="mb-1 flex items-center justify-between">
-              <label className="text-xs text-muted-foreground">{c.label}</label>
-              <span className="font-mono text-xs font-medium">{c.format(c.value)}</span>
-            </div>
-            <input
-              type="range"
-              min={c.min}
-              max={c.max}
-              step={c.step}
-              value={c.value}
+      <div className="space-y-3">
+        {/* 모드 선택 */}
+        <div className="rounded-xl bg-white/[0.03] px-4 py-3">
+          <label className="mb-2 block text-xs text-muted-foreground">매매 모드</label>
+          <div className="flex gap-2">
+            <button
               disabled={isRunning}
-              onChange={(e) => setSafety({ [c.key]: Number(e.target.value) })}
-              className="w-full accent-violet-500"
-            />
+              onClick={() => { setConfig({ mode: 'mock' }); setDashboardMode('mock') }}
+              className={`flex-1 rounded-lg py-2 text-xs font-medium transition-all ${
+                config.mode === 'mock'
+                  ? 'bg-amber-500/20 text-amber-400 ring-1 ring-amber-500/30'
+                  : 'text-muted-foreground hover:bg-white/[0.05]'
+              } disabled:opacity-40`}
+            >
+              모의투자
+            </button>
+            <button
+              disabled={isRunning}
+              onClick={() => { setConfig({ mode: 'real' }); setDashboardMode('real') }}
+              className={`flex-1 rounded-lg py-2 text-xs font-medium transition-all ${
+                config.mode === 'real'
+                  ? 'bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/30'
+                  : 'text-muted-foreground hover:bg-white/[0.05]'
+              } disabled:opacity-40`}
+            >
+              🔒 실전투자
+            </button>
           </div>
-        ))}
+        </div>
+
+        {/* 총 투자 한도 */}
+        <div className="rounded-xl bg-white/[0.03] px-4 py-3">
+          <label className="mb-1.5 block text-xs text-muted-foreground">총 투자 한도</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              value={config.budget}
+              disabled={isRunning}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10)
+                if (!isNaN(v) && v >= 10000) setConfig({ budget: v })
+              }}
+              min={10000} max={100000000} step={100000}
+              className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 font-mono text-sm outline-none focus:border-white/20 disabled:opacity-40"
+            />
+            <span className="shrink-0 text-xs text-muted-foreground">원</span>
+          </div>
+          <p className="mt-1 text-[10px] text-muted-foreground">봇이 사용할 수 있는 최대 금액</p>
+        </div>
+
+        {/* 건당 최대 금액 */}
+        <div className="rounded-xl bg-white/[0.03] px-4 py-3">
+          <label className="mb-1.5 block text-xs text-muted-foreground">건당 최대 금액</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              value={config.maxPerTrade}
+              disabled={isRunning}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10)
+                if (!isNaN(v) && v >= 500) setConfig({ maxPerTrade: v })
+              }}
+              min={500} max={10000000} step={10000}
+              className="w-full rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 font-mono text-sm outline-none focus:border-white/20 disabled:opacity-40"
+            />
+            <span className="shrink-0 text-xs text-muted-foreground">원</span>
+          </div>
+        </div>
+
+        <StepControl
+          label="동시 보유 종목"
+          value={config.maxPositions}
+          format={(v) => v + '종목'}
+          step={1} min={1} max={10}
+          disabled={isRunning}
+          onChange={(v) => setConfig({ maxPositions: v })}
+        />
+
+        <StepControl
+          label="일일 최대 주문"
+          value={config.maxDailyOrders}
+          format={(v) => v + '건'}
+          step={1} min={1} max={50}
+          disabled={isRunning}
+          onChange={(v) => setConfig({ maxDailyOrders: v })}
+        />
+
+        <StepControl
+          label="최소 매수 점수"
+          value={config.minScore}
+          format={(v) => v + '점'}
+          step={5} min={10} max={80}
+          disabled={isRunning}
+          onChange={(v) => setConfig({ minScore: v })}
+        />
       </div>
 
-      {/* 대상 종목 */}
-      <div className="mt-6">
-        <div className="mb-2 flex items-center justify-between">
-          <h4 className="text-xs font-medium text-muted-foreground">대상 종목</h4>
-          <button
-            onClick={handleAddStock}
-            disabled={isRunning}
-            className="rounded-lg border border-white/10 px-2 py-1 text-[10px] transition-colors hover:bg-white/[0.05] disabled:opacity-40"
-          >
-            + 추가
-          </button>
+      {/* 봇 자율 판단 설명 */}
+      <div className="mt-4 space-y-2">
+        <div className="rounded-xl bg-emerald-500/10 p-3">
+          <p className="mb-1 text-[11px] font-medium text-emerald-300">🎯 익절 — 봇이 자동 결정</p>
+          <p className="text-[10px] text-emerald-300/70">
+            ATR(평균진폭) 기반으로 종목별 변동성을 분석하여 익절 목표를 설정합니다.
+            변동성 큰 종목은 넓게(~8%), 안정적 종목은 좁게(~1%) 잡습니다.
+            강한 매수 신호일수록 더 높은 익절 목표를 설정합니다.
+          </p>
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {targetStocks.map((s) => (
-            <span
-              key={s.code}
-              className="group flex items-center gap-1 rounded-lg bg-white/[0.06] px-2.5 py-1 text-xs"
-            >
-              <span className="font-mono text-[10px] text-muted-foreground">{s.code}</span>
-              <span>{s.name}</span>
-              {!isRunning && (
-                <button
-                  onClick={() => handleRemoveStock(s.code)}
-                  className="ml-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-rose-400 group-hover:opacity-100"
-                >
-                  ×
-                </button>
-              )}
-            </span>
-          ))}
+        <div className="rounded-xl bg-rose-500/10 p-3">
+          <p className="mb-1 text-[11px] font-medium text-rose-300">🛑 손절 — 봇이 자동 결정</p>
+          <p className="text-[10px] text-rose-300/70">
+            ATR 기반으로 종목별 손절선을 설정합니다 (1.5%~5%).
+            매수 점수가 낮았던 종목은 -1%만 하락해도 조기 탈출합니다.
+          </p>
+        </div>
+        <div className="rounded-xl bg-violet-500/10 p-3">
+          <p className="mb-1 text-[11px] font-medium text-violet-300">🔍 종목 탐색 — 봇이 자동 결정</p>
+          <p className="text-[10px] text-violet-300/70">
+            토스증권 거래대금 상위 30종목을 실시간 스캔합니다.
+            RSI · MACD · 볼린저밴드 · 거래량 · 이평선 5개 지표로 점수를 매기고,
+            기준 점수 이상인 종목만 매수합니다.
+          </p>
         </div>
       </div>
     </div>
   )
 }
 
-export default SafetyConfigPanel
+export default ScalpingConfigPanel

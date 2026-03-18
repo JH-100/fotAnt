@@ -1,59 +1,75 @@
-// 자동매매 실행 API
+// 자율 스캘핑 API — 서버 사이드 스케줄러 제어
 import { NextResponse } from 'next/server'
 import { isKisConfigured } from '@/lib/kis-api'
-import { executeAutoTrade, isMarketOpen, getTradeLogs, STRATEGIES } from '@/lib/auto-trader'
-import type { SafetyConfig } from '@/lib/strategies/types'
+import {
+  startScheduler,
+  stopScheduler,
+  getSchedulerStatus,
+  updateSchedulerConfig,
+} from '@/lib/server-scheduler'
+import type { ScalpingConfig } from '@/lib/scalping-engine'
 
-/** POST: 자동매매 1회 실행 */
+/** POST: 스케줄러 시작/중지/설정 변경 */
 export async function POST(request: Request) {
-  if (!isKisConfigured()) {
-    return NextResponse.json(
-      { error: 'KIS API가 설정되지 않았습니다.' },
-      { status: 503 }
-    )
-  }
-
   try {
     const body = await request.json()
-    const { strategy, targetStocks, safety, force } = body as {
-      strategy: string
-      targetStocks: { code: string; name: string }[]
-      safety?: SafetyConfig
-      force?: boolean
+    const { action, config, password } = body as {
+      action: 'start' | 'stop' | 'update'
+      config?: Partial<ScalpingConfig>
+      password?: string
     }
 
-    if (!strategy || !targetStocks?.length) {
-      return NextResponse.json(
-        { error: '전략과 대상 종목을 지정해주세요.' },
-        { status: 400 }
-      )
+    const mode = config?.mode || getSchedulerStatus().config.mode
+
+    // 실전 모드 비밀번호 체크
+    if (mode === 'real' && action !== 'stop') {
+      const correctPassword = process.env.TRADING_PASSWORD
+      if (!password || password !== correctPassword) {
+        return NextResponse.json(
+          { error: '실전투자 비밀번호가 올바르지 않습니다.' },
+          { status: 403 }
+        )
+      }
     }
 
-    if (!STRATEGIES[strategy]) {
-      return NextResponse.json(
-        { error: `알 수 없는 전략: ${strategy}` },
-        { status: 400 }
-      )
+    if (action === 'start') {
+      if (!isKisConfigured(mode)) {
+        return NextResponse.json(
+          { error: `KIS API (${mode === 'real' ? '실전' : '모의'})가 설정되지 않았습니다.` },
+          { status: 503 }
+        )
+      }
+      startScheduler(config)
+      return NextResponse.json({
+        message: '스캘핑 스케줄러 시작됨',
+        ...getSchedulerStatus(),
+      })
     }
 
-    // 장 시간 체크 (force=true면 무시)
-    if (!force && !isMarketOpen()) {
-      return NextResponse.json(
-        { error: '장 운영시간이 아닙니다. (09:00~15:30 KST, 평일)' },
-        { status: 400 }
-      )
+    if (action === 'stop') {
+      stopScheduler()
+      return NextResponse.json({
+        message: '스캘핑 스케줄러 중지됨',
+        ...getSchedulerStatus(),
+      })
     }
 
-    const logs = await executeAutoTrade(targetStocks, strategy, safety)
-    return NextResponse.json({ logs, timestamp: new Date().toISOString() })
+    if (action === 'update' && config) {
+      updateSchedulerConfig(config)
+      return NextResponse.json({
+        message: '설정 업데이트됨',
+        ...getSchedulerStatus(),
+      })
+    }
+
+    return NextResponse.json({ error: '잘못된 action' }, { status: 400 })
   } catch (error) {
-    const message = error instanceof Error ? error.message : '자동매매 실행 실패'
+    const message = error instanceof Error ? error.message : '스캘핑 실행 실패'
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 
-/** GET: 매매 로그 조회 */
+/** GET: 스케줄러 상태 + 로그 + 스캔 결과 */
 export async function GET() {
-  const logs = getTradeLogs()
-  return NextResponse.json({ logs, marketOpen: isMarketOpen() })
+  return NextResponse.json(getSchedulerStatus())
 }

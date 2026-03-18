@@ -2,6 +2,7 @@
 
 // 토스증권 랭킹 — 글래스모피즘
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import useRanking from '@/hooks/use-ranking'
@@ -30,18 +31,26 @@ const formatBasedAt = (basedAt?: string): string => {
 const RankRow = ({ item }: { item: RankingItem }) => {
   const isUp = item.changeType === 'UP'
   const isDown = item.changeType === 'DOWN'
+  const router = useRouter()
   const displayPrice = item.priceKrw
     ? `${new Intl.NumberFormat('ko-KR').format(item.priceKrw)}원`
     : `${new Intl.NumberFormat('ko-KR').format(item.price)}원`
 
+  // 코드에서 접두어 제거 (KR:005930 → 005930)
+  const cleanCode = item.code.replace(/^[A-Z]+:/, '')
+
   return (
-    <div className="flex items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-white/[0.03]">
+    <div
+      onClick={() => router.push(`/?code=${cleanCode}&name=${encodeURIComponent(item.name)}`)}
+      className="flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-white/[0.06]"
+    >
       <span className="w-6 text-center font-mono text-xs text-muted-foreground">
         {item.rank}
       </span>
-      <span className="min-w-0 flex-1 truncate text-sm font-medium">
-        {item.name}
-      </span>
+      <div className="min-w-0 flex-1">
+        <span className="truncate text-sm font-medium">{item.name}</span>
+        <span className="ml-1.5 font-mono text-[10px] text-muted-foreground">{cleanCode}</span>
+      </div>
       <span className="w-24 text-right font-mono text-xs tabular-nums">
         {displayPrice}
       </span>
@@ -88,7 +97,7 @@ const RankingContent = ({ category, market }: { category: string; market: string
           {formatBasedAt(data.basedAt)}
         </p>
       )}
-      <div className="max-h-[520px] divide-y divide-white/[0.03] overflow-y-auto">
+      <div className="max-h-[600px] divide-y divide-white/[0.03] overflow-y-auto">
         {data?.items.map((item) => (
           <RankRow key={item.code} item={item} />
         ))}

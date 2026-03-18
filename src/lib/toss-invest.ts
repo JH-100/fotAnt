@@ -135,8 +135,6 @@ export const getTossRanking = async (
     id: categoryId,
     filters: [
       'KRX_MANAGEMENT_STOCK',
-      'MARKET_CAP_GREATER_THAN_50M',
-      'STOCKS_PRICE_GREATER_THAN_ONE_DOLLAR',
     ],
     duration,
     tag: market,

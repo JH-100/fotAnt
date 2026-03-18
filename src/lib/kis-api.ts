@@ -1,90 +1,144 @@
-// 한국투자증권(KIS) OpenAPI 클라이언트
+// 한국투자증권(KIS) OpenAPI 클라이언트 — 실전/모의 듀얼 모드 지원
 import type { KisToken, KisBalance, KisHolding, KisOrder, KisOrderRequest, DailyPrice } from '@/types/kis'
 
-/** 모의투자 모드 여부 */
-const isMockMode = (): boolean => process.env.KIS_MOCK_MODE === 'true'
+export type TradingMode = 'real' | 'mock'
 
-/** 베이스 URL */
-const getBaseUrl = (): string =>
-  isMockMode()
-    ? 'https://openapivts.koreainvestment.com:29443'
-    : 'https://openapi.koreainvestment.com:9443'
-
-/** 환경변수 가져오기 */
-const getAppKey = (): string => {
-  const key = process.env.KIS_APP_KEY
-  if (!key) throw new Error('KIS_APP_KEY 환경변수가 설정되지 않았습니다.')
-  return key
+/** 모드별 설정 */
+const getModeConfig = (mode: TradingMode) => {
+  if (mode === 'mock') {
+    return {
+      baseUrl: 'https://openapivts.koreainvestment.com:29443',
+      appKey: process.env.KIS_MOCK_APP_KEY || process.env.KIS_APP_KEY || '',
+      appSecret: process.env.KIS_MOCK_APP_SECRET || process.env.KIS_APP_SECRET || '',
+      accountNo: process.env.KIS_MOCK_ACCOUNT_NO || process.env.KIS_ACCOUNT_NO || '',
+    }
+  }
+  return {
+    baseUrl: 'https://openapi.koreainvestment.com:9443',
+    appKey: process.env.KIS_REAL_APP_KEY || process.env.KIS_APP_KEY || '',
+    appSecret: process.env.KIS_REAL_APP_SECRET || process.env.KIS_APP_SECRET || '',
+    accountNo: process.env.KIS_REAL_ACCOUNT_NO || process.env.KIS_ACCOUNT_NO || '',
+  }
 }
 
-const getAppSecret = (): string => {
-  const secret = process.env.KIS_APP_SECRET
-  if (!secret) throw new Error('KIS_APP_SECRET 환경변수가 설정되지 않았습니다.')
-  return secret
-}
-
-/** 계좌번호 파싱 (12345678-01 → CANO: 12345678, ACNT_PRDT_CD: 01) */
-const getAccount = (): { cano: string; acntPrdtCd: string } => {
-  const acctNo = process.env.KIS_ACCOUNT_NO
-  if (!acctNo) throw new Error('KIS_ACCOUNT_NO 환경변수가 설정되지 않았습니다.')
+/** 계좌번호 파싱 */
+const parseAccount = (acctNo: string): { cano: string; acntPrdtCd: string } => {
   const [cano, acntPrdtCd] = acctNo.split('-')
-  if (!cano || !acntPrdtCd) throw new Error('KIS_ACCOUNT_NO 형식이 올바르지 않습니다. (예: 12345678-01)')
+  if (!cano || !acntPrdtCd) throw new Error('계좌번호 형식 오류 (예: 12345678-01)')
   return { cano, acntPrdtCd }
 }
 
-// 토큰 캐시 (메모리)
-let tokenCache: { token: string; expiresAt: number } | null = null
+/** KIS API 설정 상태 확인 */
+export const isKisConfigured = (mode?: TradingMode): boolean => {
+  if (mode) {
+    const cfg = getModeConfig(mode)
+    return !!(cfg.appKey && cfg.appSecret && cfg.accountNo)
+  }
+  // 어느 쪽이든 설정되어 있으면 true
+  return !!(process.env.KIS_APP_KEY || process.env.KIS_REAL_APP_KEY || process.env.KIS_MOCK_APP_KEY)
+}
 
-/** OAuth 토큰 발급/갱신 */
-export const getKisToken = async (): Promise<string> => {
-  // 캐시된 토큰이 유효하면 재사용
-  if (tokenCache && Date.now() < tokenCache.expiresAt) {
-    return tokenCache.token
+// ─── 토큰 캐시 (모드별 분리) + 동시 요청 중복 방지 ────
+const tokenCaches: Record<string, { token: string; expiresAt: number }> = {}
+const tokenPending: Record<string, Promise<string> | undefined> = {}
+
+/** OAuth 토큰 발급/갱신 — 동시 호출 시 1개만 실제 발급, 나머지는 대기 */
+const getToken = async (mode: TradingMode): Promise<string> => {
+  // 1) 캐시에 유효한 토큰이 있으면 즉시 반환
+  const cached = tokenCaches[mode]
+  if (cached && Date.now() < cached.expiresAt) return cached.token
+
+  // 2) 이미 발급 중인 요청이 있으면 같은 Promise 재사용 (중복 방지)
+  const pending = tokenPending[mode]
+  if (pending) {
+    return pending
   }
 
-  const res = await fetch(`${getBaseUrl()}/oauth2/tokenP`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'client_credentials',
-      appkey: getAppKey(),
-      appsecret: getAppSecret(),
-    }),
-  })
+  // 3) 실제 발급 1회만 실행
+  tokenPending[mode] = (async () => {
+    // 이중 체크 — 대기 중 다른 요청이 캐시를 채웠을 수 있음
+    const recheck = tokenCaches[mode]
+    if (recheck && Date.now() < recheck.expiresAt) return recheck.token
 
-  if (!res.ok) throw new Error(`KIS 토큰 발급 실패: ${res.status}`)
+    const cfg = getModeConfig(mode)
 
-  const data: KisToken = await res.json()
-  // 만료 1시간 전에 갱신하도록 설정
-  tokenCache = {
-    token: data.access_token,
-    expiresAt: Date.now() + (data.expires_in - 3600) * 1000,
+    if (!cfg.appKey || !cfg.appSecret) {
+      throw new Error(`KIS 토큰 발급 실패 (${mode}): appKey 또는 appSecret이 비어있습니다. .env.local 확인 필요`)
+    }
+
+    console.log(`[KIS] 토큰 발급 요청 (${mode}) → ${cfg.baseUrl}/oauth2/tokenP`)
+
+    let res: Response
+    try {
+      res = await fetch(`${cfg.baseUrl}/oauth2/tokenP`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          grant_type: 'client_credentials',
+          appkey: cfg.appKey,
+          appsecret: cfg.appSecret,
+        }),
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      throw new Error(`KIS 토큰 네트워크 오류 (${mode}): ${msg} — ${cfg.baseUrl} 연결 실패`)
+    }
+
+    const text = await res.text()
+    let data: Record<string, unknown>
+    try {
+      data = JSON.parse(text)
+    } catch {
+      throw new Error(`KIS 토큰 응답 파싱 실패 (${mode}): HTTP ${res.status} — ${text.slice(0, 200)}`)
+    }
+
+    if (!res.ok) {
+      throw new Error(`KIS 토큰 발급 실패 (${mode}): HTTP ${res.status} — ${data.error_description || data.msg1 || text.slice(0, 200)}`)
+    }
+
+    if (!data.access_token) {
+      throw new Error(`KIS 토큰 응답에 access_token 없음 (${mode}): ${JSON.stringify(data).slice(0, 300)}`)
+    }
+
+    console.log(`[KIS] 토큰 발급 성공 (${mode}), 만료: ${data.expires_in}초`)
+
+    tokenCaches[mode] = {
+      token: data.access_token as string,
+      expiresAt: Date.now() + ((data.expires_in as number) - 3600) * 1000,
+    }
+    return data.access_token as string
+  })()
+
+  try {
+    return await tokenPending[mode]
+  } finally {
+    delete tokenPending[mode]
   }
-
-  return data.access_token
 }
 
 /** 공통 헤더 생성 */
-const getHeaders = async (trId: string): Promise<Record<string, string>> => {
-  const token = await getKisToken()
+const getHeaders = async (mode: TradingMode, trId: string): Promise<Record<string, string>> => {
+  const cfg = getModeConfig(mode)
+  const token = await getToken(mode)
   return {
     'Content-Type': 'application/json; charset=utf-8',
     authorization: `Bearer ${token}`,
-    appkey: getAppKey(),
-    appsecret: getAppSecret(),
+    appkey: cfg.appKey,
+    appsecret: cfg.appSecret,
     tr_id: trId,
     custtype: 'P',
   }
 }
 
-/** hashkey 발급 (POST 요청 body에 필요) */
-const getHashKey = async (body: Record<string, string>): Promise<string> => {
-  const res = await fetch(`${getBaseUrl()}/uapi/hashkey`, {
+/** hashkey 발급 */
+const getHashKey = async (mode: TradingMode, body: Record<string, string>): Promise<string> => {
+  const cfg = getModeConfig(mode)
+  const res = await fetch(`${cfg.baseUrl}/uapi/hashkey`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      appkey: getAppKey(),
-      appsecret: getAppSecret(),
+      appkey: cfg.appKey,
+      appsecret: cfg.appSecret,
     },
     body: JSON.stringify(body),
   })
@@ -94,16 +148,21 @@ const getHashKey = async (body: Record<string, string>): Promise<string> => {
   return data.HASH as string
 }
 
-/** KIS API 설정 상태 확인 */
-export const isKisConfigured = (): boolean => {
-  return !!(process.env.KIS_APP_KEY && process.env.KIS_APP_SECRET && process.env.KIS_ACCOUNT_NO)
-}
+// ─── 레거시 호환 (mode 파라미터 없는 함수) ──────────
+const defaultMode = (): TradingMode =>
+  process.env.KIS_MOCK_MODE === 'true' ? 'mock' : 'real'
 
-/** 잔고 조회 */
-export const getKisBalance = async (): Promise<KisBalance> => {
-  const { cano, acntPrdtCd } = getAccount()
-  const trId = isMockMode() ? 'VTTC8434R' : 'TTTC8434R'
-  const headers = await getHeaders(trId)
+/** 레거시: OAuth 토큰 (기존 호환) */
+export const getKisToken = async (): Promise<string> => getToken(defaultMode())
+
+// ─── 잔고 조회 ──────────────────────────────────────
+
+export const getKisBalance = async (mode?: TradingMode): Promise<KisBalance> => {
+  const m = mode ?? defaultMode()
+  const cfg = getModeConfig(m)
+  const { cano, acntPrdtCd } = parseAccount(cfg.accountNo)
+  const trId = m === 'mock' ? 'VTTC8434R' : 'TTTC8434R'
+  const headers = await getHeaders(m, trId)
 
   const params = new URLSearchParams({
     CANO: cano,
@@ -120,16 +179,17 @@ export const getKisBalance = async (): Promise<KisBalance> => {
   })
 
   const res = await fetch(
-    `${getBaseUrl()}/uapi/domestic-stock/v1/trading/inquire-balance?${params.toString()}`,
+    `${cfg.baseUrl}/uapi/domestic-stock/v1/trading/inquire-balance?${params.toString()}`,
     { headers }
   )
 
-  if (!res.ok) throw new Error(`KIS 잔고 조회 실패: ${res.status}`)
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '')
+    throw new Error(`KIS 잔고 조회 실패: HTTP ${res.status} — ${errText.slice(0, 200)}`)
+  }
   const data = await res.json()
-
   if (data.rt_cd !== '0') throw new Error(`KIS 잔고 조회 오류: ${data.msg1}`)
 
-  // output1: 보유종목 배열
   const holdings: KisHolding[] = (data.output1 ?? [])
     .filter((item: Record<string, string>) => parseInt(item.hldg_qty ?? '0', 10) > 0)
     .map((item: Record<string, string>) => ({
@@ -143,7 +203,6 @@ export const getKisBalance = async (): Promise<KisBalance> => {
       evalAmount: parseInt(item.evlu_amt ?? '0', 10),
     }))
 
-  // output2: 계좌 요약 (첫 번째 항목)
   const summary = data.output2?.[0] ?? {}
   const cashBalance = parseInt(summary.dnca_tot_amt ?? '0', 10)
   const totalEval = parseInt(summary.tot_evlu_amt ?? '0', 10)
@@ -163,30 +222,45 @@ export const getKisBalance = async (): Promise<KisBalance> => {
   }
 }
 
-/** 주문 실행 (매수/매도) */
-export const placeKisOrder = async (request: KisOrderRequest): Promise<KisOrder> => {
-  const { cano, acntPrdtCd } = getAccount()
+// ─── 주문 실행 ──────────────────────────────────────
+
+export const placeKisOrder = async (request: KisOrderRequest, mode?: TradingMode): Promise<KisOrder> => {
+  const m = mode ?? defaultMode()
+  const cfg = getModeConfig(m)
+  const { cano, acntPrdtCd } = parseAccount(cfg.accountNo)
   const isBuy = request.side === 'buy'
-  const trId = isMockMode()
+  const trId = m === 'mock'
     ? (isBuy ? 'VTTC0802U' : 'VTTC0801U')
     : (isBuy ? 'TTTC0802U' : 'TTTC0801U')
+
+  // ORD_DVSN 매핑
+  const ordDvsnMap: Record<string, string> = {
+    market: '01',
+    limit: '00',
+    'pre-market': '05',
+    'after-close': '06',
+    'after-hours': '07',
+  }
+
+  const needsPrice = request.orderType === 'limit' || request.orderType === 'after-hours'
+  const ordUnpr = needsPrice ? String(request.price ?? 0) : '0'
 
   const body: Record<string, string> = {
     CANO: cano,
     ACNT_PRDT_CD: acntPrdtCd,
     PDNO: request.code,
-    ORD_DVSN: request.orderType === 'market' ? '01' : '00',
+    ORD_DVSN: ordDvsnMap[request.orderType] ?? '01',
     ORD_QTY: String(request.quantity),
-    ORD_UNPR: request.orderType === 'market' ? '0' : String(request.price ?? 0),
+    ORD_UNPR: ordUnpr,
   }
 
   const [headers, hashkey] = await Promise.all([
-    getHeaders(trId),
-    getHashKey(body),
+    getHeaders(m, trId),
+    getHashKey(m, body),
   ])
 
   const res = await fetch(
-    `${getBaseUrl()}/uapi/domestic-stock/v1/trading/order-cash`,
+    `${cfg.baseUrl}/uapi/domestic-stock/v1/trading/order-cash`,
     {
       method: 'POST',
       headers: { ...headers, hashkey },
@@ -197,7 +271,9 @@ export const placeKisOrder = async (request: KisOrderRequest): Promise<KisOrder>
   if (!res.ok) throw new Error(`KIS 주문 실패: ${res.status}`)
   const data = await res.json()
 
-  const success = data.rt_cd === '0'
+  if (data.rt_cd !== '0') {
+    throw new Error(data.msg1 || '주문이 거절되었습니다.')
+  }
 
   return {
     orderId: data.output?.ODNO ?? '',
@@ -206,20 +282,24 @@ export const placeKisOrder = async (request: KisOrderRequest): Promise<KisOrder>
     name: request.code,
     quantity: request.quantity,
     price: request.price ?? 0,
-    status: success ? 'executed' : 'failed',
-    executedAt: success ? new Date().toISOString() : undefined,
-    message: data.msg1 ?? '',
+    status: 'executed' as const,
+    executedAt: new Date().toISOString(),
+    message: data.msg1 ?? '주문이 접수되었습니다.',
   }
 }
 
-/** 일별 시세 조회 (기술지표 분석용) */
+// ─── 일별 시세 조회 (기술지표 분석용) ────────────────
+
 export const getKisDailyPrices = async (
   code: string,
-  days: number = 100
+  days: number = 100,
+  mode?: TradingMode
 ): Promise<DailyPrice[]> => {
-  const headers = await getHeaders('FHKST03010100')
+  // 시세 조회 (모의/실전 공통)
+  const m = mode ?? defaultMode()
+  const headers = await getHeaders(m, 'FHKST03010100')
+  const cfg = getModeConfig(m)
 
-  // 날짜 범위 계산
   const endDate = new Date()
   const startDate = new Date()
   startDate.setDate(startDate.getDate() - Math.ceil(days * 1.5))
@@ -237,13 +317,12 @@ export const getKisDailyPrices = async (
   })
 
   const res = await fetch(
-    `${getBaseUrl()}/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice?${params.toString()}`,
+    `${cfg.baseUrl}/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice?${params.toString()}`,
     { headers }
   )
 
   if (!res.ok) throw new Error(`KIS 일별 시세 조회 실패: ${res.status}`)
   const data = await res.json()
-
   if (data.rt_cd !== '0') throw new Error(`KIS 일별 시세 오류: ${data.msg1}`)
 
   const prices: DailyPrice[] = (data.output2 ?? [])
@@ -259,4 +338,54 @@ export const getKisDailyPrices = async (
     .slice(0, days)
 
   return prices
+}
+
+// ─── 거래량 상위 종목 조회 (스캐너용) ──────────────
+
+export interface VolumeRankItem {
+  code: string
+  name: string
+  price: number
+  change: number        // 등락률 %
+  volume: number        // 누적 거래량
+  tradingValue: number  // 거래대금 (백만원)
+}
+
+/** KIS 거래량 순위 — 코스피+코스닥 상위 30종목 */
+export const getKisVolumeRank = async (mode?: TradingMode): Promise<VolumeRankItem[]> => {
+  const m = mode ?? defaultMode()
+  const headers = await getHeaders(m, 'FHPST01710000')
+  const cfg = getModeConfig(m)
+
+  const params = new URLSearchParams({
+    FID_COND_MRKT_DIV_CODE: 'J',    // 전체 (J=코스피+코스닥)
+    FID_COND_SCR_DIV_CODE: '20171',
+    FID_INPUT_ISCD: '0000',
+    FID_DIV_CLS_CODE: '0',
+    FID_BLNG_CLS_CODE: '0',          // 0: 전체
+    FID_TRGT_CLS_CODE: '111111111',
+    FID_TRGT_EXLS_CLS_CODE: '000000',
+    FID_INPUT_PRICE_1: '0',
+    FID_INPUT_PRICE_2: '0',
+    FID_VOL_CNT: '0',
+    FID_INPUT_DATE_1: '',
+  })
+
+  const res = await fetch(
+    `${cfg.baseUrl}/uapi/domestic-stock/v1/quotations/volume-rank?${params.toString()}`,
+    { headers }
+  )
+
+  if (!res.ok) throw new Error(`KIS 거래량순위 조회 실패: ${res.status}`)
+  const data = await res.json()
+  if (data.rt_cd !== '0') throw new Error(`KIS 거래량순위 오류: ${data.msg1}`)
+
+  return (data.output ?? []).map((item: Record<string, string>) => ({
+    code: item.mksc_shrn_iscd ?? '',
+    name: item.hts_kor_isnm ?? '',
+    price: parseInt(item.stck_prpr ?? '0', 10),
+    change: parseFloat(item.prdy_ctrt ?? '0'),
+    volume: parseInt(item.acml_vol ?? '0', 10),
+    tradingValue: Math.round(parseInt(item.acml_tr_pbmn ?? '0', 10) / 1_000_000),
+  }))
 }

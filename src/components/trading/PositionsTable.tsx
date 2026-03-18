@@ -1,6 +1,6 @@
 'use client'
 
-// 보유종목 테이블
+// 보유종목 테이블 — 모드 지원
 import { Skeleton } from '@/components/ui/skeleton'
 import useBalance from '@/hooks/use-balance'
 import type { KisHolding } from '@/types/kis'
@@ -43,8 +43,8 @@ const HoldingRow = ({ holding }: { holding: KisHolding }) => {
   )
 }
 
-const PositionsTable = () => {
-  const { data: balance, isLoading } = useBalance()
+const PositionsTable = ({ mode = 'real' }: { mode?: 'real' | 'mock' }) => {
+  const { data: balance, isLoading } = useBalance(mode)
 
   return (
     <div className="glass rounded-2xl">

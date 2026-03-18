@@ -73,7 +73,7 @@ const RecommendationRow = ({ rec }: { rec: StockRecommendation }) => {
 }
 
 const RecommendationPanel = () => {
-  const { data: recommendations, isLoading, error } = useRecommendations()
+  const { data: recommendations, isLoading, error, refetch, isFetching } = useRecommendations()
 
   return (
     <div className="glass rounded-2xl">
@@ -85,6 +85,15 @@ const RecommendationPanel = () => {
             5분 갱신
           </span>
         </div>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className={`rounded-lg border border-white/10 px-3 py-1 text-[11px] font-medium transition-all hover:bg-white/[0.06] disabled:opacity-40 ${
+            isFetching ? 'animate-pulse' : ''
+          }`}
+        >
+          {isFetching ? '분석 중...' : '새로고침'}
+        </button>
       </div>
 
       <div className="p-2">
