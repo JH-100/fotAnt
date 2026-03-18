@@ -21,8 +21,8 @@ export async function POST(request: Request) {
 
     const mode = config?.mode || getSchedulerStatus().config.mode
 
-    // 실전 모드 비밀번호 체크
-    if (mode === 'real' && action !== 'stop') {
+    // 실전 모드 비밀번호 체크 — start만 (stop/update는 비밀번호 불필요)
+    if (mode === 'real' && action === 'start') {
       const correctPassword = process.env.TRADING_PASSWORD
       if (!password || password !== correctPassword) {
         return NextResponse.json(
