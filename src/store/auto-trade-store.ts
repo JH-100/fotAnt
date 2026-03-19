@@ -25,20 +25,20 @@ interface AutoTradeState {
   logs: TradeLogEntry[]
   scanResults: ScanItem[]
   lastExecuted: string | null
-  dailyStats: { orders: number; pnl: number }
+  dailyStats: { orders: number; pnl: number; lossLevel?: string }
 
   setRunning: (running: boolean) => void
   setConfig: (config: Partial<ScalpingConfig>) => void
   addLogs: (logs: TradeLogEntry[]) => void
   setScanResults: (results: ScanItem[]) => void
   setLastExecuted: (time: string) => void
-  setDailyStats: (stats: { orders: number; pnl: number }) => void
+  setDailyStats: (stats: { orders: number; pnl: number; lossLevel?: string }) => void
   /** 폴링 데이터를 한번에 업데이트 (persist 쓰기 1회로 줄임) */
   updateFromServer: (data: {
     isRunning?: boolean
     logs?: TradeLogEntry[]
     scanResults?: ScanItem[]
-    dailyStats?: { orders: number; pnl: number }
+    dailyStats?: { orders: number; pnl: number; lossLevel?: string }
     config?: Partial<ScalpingConfig>
   }) => void
 }

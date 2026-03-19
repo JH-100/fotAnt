@@ -67,10 +67,34 @@ const SECTOR_MAP: Record<string, string> = {
 }
 const MAX_PER_SECTOR = 2 // 동일 섹터 최대 보유 종목 수
 
+// ─── 손실 레벨 (단계별 리스크 관리) ────────────────
+export type LossLevel = 'normal' | 'conservative' | 'recovery' | 'full-stop'
+
+const LOSS_THRESHOLDS: { level: LossLevel; pct: number }[] = [
+  { level: 'full-stop',    pct: -0.08 },  // -8%: 매수 완전 차단 (매도만)
+  { level: 'recovery',     pct: -0.05 },  // -5%: 최소 매수 (수급 필수)
+  { level: 'conservative', pct: -0.03 },  // -3%: 보수적 매수
+]
+
+const LOSS_LABELS: Record<LossLevel, string> = {
+  'normal':       '정상 모드',
+  'conservative': '보수적 모드 (-3% 도달)',
+  'recovery':     '복구 모드 (-5% 도달)',
+  'full-stop':    '완전 중단 (-8% 도달, 매도만 허용)',
+}
+
+const determineLossLevel = (pnl: number, budget: number): LossLevel => {
+  for (const t of LOSS_THRESHOLDS) {
+    if (pnl < budget * t.pct) return t.level
+  }
+  return 'normal'
+}
+
 // ─── 엔진 상태 (메모리) ────────────────────────────
 let dailyOrderCount = 0
 let lastResetDate = ''
 let dailyPnL = 0
+let currentLossLevel: LossLevel = 'normal'
 const tradeLogs: TradeLogEntry[] = []
 let lastScanResults: ScanResult[] = []
 let cycleRunning = false  // 동시실행 방지 플래그
@@ -241,6 +265,7 @@ const resetDailyIfNeeded = () => {
     }
     dailyOrderCount = 0
     dailyPnL = 0
+    currentLossLevel = 'normal'
     lastResetDate = today
     for (const code of Object.keys(positionMetas)) {
       delete positionMetas[code]
@@ -250,7 +275,7 @@ const resetDailyIfNeeded = () => {
 
 export const getScalpingLogs = (): TradeLogEntry[] => [...tradeLogs].reverse()
 export const getLastScan = (): ScanResult[] => lastScanResults
-export const getDailyStats = () => ({ orders: dailyOrderCount, pnl: dailyPnL })
+export const getDailyStats = () => ({ orders: dailyOrderCount, pnl: dailyPnL, lossLevel: currentLossLevel })
 
 /** 장 운영시간 체크 (장전시간외 08:20 ~ 시간외단일가 18:00, NXT 포함) */
 export const isMarketOpen = (): boolean => {
@@ -381,11 +406,14 @@ const _executeScalpingCycleInner = async (
   resetDailyIfNeeded()
   const newLogs: TradeLogEntry[] = []
 
-  // 일일 손실 한도 체크 (-5% 이상 손실 시 거래 중지)
-  const maxDailyLoss = config.budget * -0.05
-  if (dailyPnL < maxDailyLoss) {
-    console.log(`[스캘핑] 🛑 일일 손실 한도 도달 (${dailyPnL.toLocaleString()}원 < ${maxDailyLoss.toLocaleString()}원) — 거래 중지`)
-    return { logs: [], scan: lastScanResults }
+  // 일일 손실 레벨 판단 (단계별 리스크 관리 — 매도는 항상 실행)
+  const prevLevel = currentLossLevel
+  currentLossLevel = determineLossLevel(dailyPnL, config.budget)
+  if (currentLossLevel !== prevLevel) {
+    console.log(`[스캘핑] 모드 전환: ${LOSS_LABELS[prevLevel]} → ${LOSS_LABELS[currentLossLevel]} (일손익 ${dailyPnL.toLocaleString()}원)`)
+  }
+  if (currentLossLevel !== 'normal') {
+    console.log(`[스캘핑] 현재 ${LOSS_LABELS[currentLossLevel]} — 일손익 ${dailyPnL.toLocaleString()}원`)
   }
 
   // 1. 잔고 조회 (실패해도 스캔은 계속)
@@ -514,14 +542,32 @@ const _executeScalpingCycleInner = async (
   let effectiveMinScore = afterMarket ? Math.max(config.minScore + 10, 35) : config.minScore
   // 장개시 10분 / 점심시간 → 최소점수 추가 상향 (변동성 필터)
   effectiveMinScore += timeAdj.scoreBonus
-  const effectiveMaxPerTrade = config.maxPerTrade  // 사용자 설정 존중
-  const effectiveMaxPositions = afterMarket ? Math.min(config.maxPositions, 3) : config.maxPositions
+  let effectiveMaxPerTrade = config.maxPerTrade  // 사용자 설정 존중
+  let effectiveMaxPositions = afterMarket ? Math.min(config.maxPositions, 3) : config.maxPositions
 
   if (afterMarket) {
     console.log(`[스캘핑] 에프터마켓 보정 — 최소점수 ${effectiveMinScore}점, 최대 ${effectiveMaxPositions}종목 (건당 ${effectiveMaxPerTrade.toLocaleString()}원 유지)`)
   }
   if (timeAdj.scoreBonus > 0) {
     console.log(`[스캘핑] 시간대 보정: ${timeAdj.label} → 최소점수 ${effectiveMinScore}점`)
+  }
+
+  // ─── 손실 레벨별 매수 제한 ───
+  let maxNewBuysThisCycle = Infinity
+  let allowAddBuy = true
+  if (currentLossLevel === 'full-stop') {
+    console.log(`[스캘핑] 완전 중단 모드 — 신규 매수 차단 (보유종목 매도/관리는 계속)`)
+  } else if (currentLossLevel === 'recovery') {
+    effectiveMinScore += 20
+    effectiveMaxPerTrade = Math.round(effectiveMaxPerTrade * 0.5)
+    maxNewBuysThisCycle = 1
+    allowAddBuy = false
+    console.log(`[스캘핑] 복구 모드 매수 제한 — 최소점수 ${effectiveMinScore}, 건당 ${effectiveMaxPerTrade.toLocaleString()}원, 최대 1건, 추가매수 X`)
+  } else if (currentLossLevel === 'conservative') {
+    effectiveMinScore += 10
+    effectiveMaxPerTrade = Math.round(effectiveMaxPerTrade * 0.7)
+    effectiveMaxPositions = Math.min(effectiveMaxPositions, 3)
+    console.log(`[스캘핑] 보수적 모드 매수 제한 — 최소점수 ${effectiveMinScore}, 건당 ${effectiveMaxPerTrade.toLocaleString()}원, 최대 ${effectiveMaxPositions}종목`)
   }
 
   // ★ 마감 30분: 보유 포지션 수익 중이면 익절 우선
@@ -539,14 +585,15 @@ const _executeScalpingCycleInner = async (
     }
   }
 
-  if (freshBalance) {
+  if (freshBalance && currentLossLevel !== 'full-stop') {
     const currentPositionCount = freshBalance.holdings.filter(h => h.quantity > 0).length
     let positionSlots = effectiveMaxPositions - currentPositionCount
     let freshCash = Math.min(freshBalance.cashBalance, config.budget)
+    let newBuyCount = 0
 
     // ─── 4A. 신규 매수 ───
     // ★ 과거 성과 학습: 승률 낮은 패턴(< 40%) 감점 → 필터링
-    const buySignals = scanResults
+    let buySignals = scanResults
       .map(s => {
         const winRate = getReasonWinRate(s.reasons)
         if (winRate !== null && winRate < 0.4) {
@@ -558,6 +605,16 @@ const _executeScalpingCycleInner = async (
         return s
       })
       .filter(s => s.signal === 'BUY' && s.score >= effectiveMinScore)
+
+    // ★ 복구 모드: 외국인/기관 순매수 종목만 허용
+    if (currentLossLevel === 'recovery') {
+      buySignals = buySignals.filter(s => {
+        const hasSupply = (s.foreignNetBuy ?? 0) > 0 || (s.institutionNetBuy ?? 0) > 0
+        if (!hasSupply) console.log(`[스캘핑] 복구 모드 — ${s.name}(${s.score}점) 수급 미달로 제외`)
+        return hasSupply
+      })
+    }
+
     const newBuyTargets: typeof scanResults = []
     const addBuyTargets: { scan: (typeof scanResults)[number]; holding: (typeof freshBalance.holdings)[number] }[] = []
 
@@ -603,6 +660,10 @@ const _executeScalpingCycleInner = async (
       }
       if (positionSlots <= 0) break
       if (freshCash < effectiveMaxPerTrade * 0.3) break
+      if (newBuyCount >= maxNewBuysThisCycle) {
+        console.log(`[스캘핑] ${LOSS_LABELS[currentLossLevel]} — 이번 사이클 매수 한도 도달 (${newBuyCount}건)`)
+        break
+      }
 
       // ETF/레버리지/인버스 매수 차단
       if (isETF(target.name)) {
@@ -644,6 +705,7 @@ const _executeScalpingCycleInner = async (
         newLogs.push(log)
         if (log.result === 'success') {
           positionSlots--
+          newBuyCount++
           freshCash -= quantity * target.price
           positionMetas[target.code] = {
             takeProfitPercent: target.takeProfitPercent,
@@ -659,8 +721,11 @@ const _executeScalpingCycleInner = async (
       }
     }
 
-    // ─── 4B. 추가 매수 (불타기/물타기) ───
-    for (const { scan: target, holding } of addBuyTargets) {
+    // ─── 4B. 추가 매수 (불타기/물타기) — 복구/완전중단 모드에서는 차단 ───
+    if (!allowAddBuy && addBuyTargets.length > 0) {
+      console.log(`[스캘핑] ${LOSS_LABELS[currentLossLevel]} — 추가매수(불타기/물타기) 차단`)
+    }
+    for (const { scan: target, holding } of (allowAddBuy ? addBuyTargets : [])) {
       if (dailyOrderCount >= config.maxDailyOrders) break
       if (freshCash < config.maxPerTrade * 0.3) break
       if (isETF(target.name)) continue // ETF 추가매수도 차단
@@ -700,6 +765,8 @@ const _executeScalpingCycleInner = async (
         }
       }
     }
+  } else if (currentLossLevel === 'full-stop') {
+    console.log('[스캘핑] 완전 중단 모드 — 매수 차단, 보유종목 관리만 실행')
   } else {
     console.log('[스캘핑] 잔고 조회 불가 — 매수 건너뜀 (스캔 결과만 반환)')
   }
