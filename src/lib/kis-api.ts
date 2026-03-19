@@ -77,7 +77,13 @@ const saveTokensToFile = () => {
 loadTokensFromFile()
 
 /** OAuth 토큰 발급/갱신 — 동시 호출 시 1개만 실제 발급, 나머지는 대기 */
-const getToken = async (mode: TradingMode): Promise<string> => {
+const getToken = async (mode: TradingMode, forceRefresh = false): Promise<string> => {
+  // 강제 갱신 요청 시 캐시 삭제
+  if (forceRefresh) {
+    delete tokenCaches[mode]
+    delete tokenPending[mode]
+  }
+
   // 1) 캐시에 유효한 토큰이 있으면 즉시 반환
   const cached = tokenCaches[mode]
   if (cached && Date.now() < cached.expiresAt) return cached.token
@@ -151,6 +157,25 @@ const getToken = async (mode: TradingMode): Promise<string> => {
   }
 }
 
+/** 토큰 강제 삭제 — 만료/오류 시 호출 */
+const invalidateToken = (mode: TradingMode) => {
+  delete tokenCaches[mode]
+  delete tokenPending[mode]
+  // 파일에서도 제거
+  if (typeof window !== 'undefined') return
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+    const filePath = path.join(process.cwd(), TOKEN_FILE_PATH)
+    if (fs.existsSync(filePath)) {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+      delete data[mode]
+      fs.writeFileSync(filePath, JSON.stringify(data), 'utf-8')
+    }
+  } catch { /* ignore */ }
+  console.log(`[KIS] ${mode} 토큰 무효화 — 다음 요청 시 재발급`)
+}
+
 /** 공통 헤더 생성 */
 const getHeaders = async (mode: TradingMode, trId: string): Promise<Record<string, string>> => {
   const cfg = getModeConfig(mode)
@@ -163,6 +188,40 @@ const getHeaders = async (mode: TradingMode, trId: string): Promise<Record<strin
     tr_id: trId,
     custtype: 'P',
   }
+}
+
+/** API 호출 래퍼 — 토큰 만료 시 자동 재발급 후 1회 재시도 */
+const kisApiFetch = async (
+  mode: TradingMode,
+  trId: string,
+  url: string,
+  options?: { method?: string; body?: string }
+): Promise<Response> => {
+  const headers = await getHeaders(mode, trId)
+  let res = await fetch(url, { ...options, headers })
+
+  // 토큰 만료 에러 감지 (EGW00123 = 만료, EGW00121 = 유효하지 않음)
+  if (res.status === 401 || res.status === 403) {
+    console.log(`[KIS] 토큰 만료 감지 (HTTP ${res.status}) — 재발급 시도`)
+    invalidateToken(mode)
+    const newHeaders = await getHeaders(mode, trId)
+    res = await fetch(url, { ...options, headers: newHeaders })
+  } else {
+    // body를 미리 읽지 않고 텍스트로 확인할 수도 있으므로
+    // rt_cd 체크는 호출자에서 처리
+    const cloned = res.clone()
+    try {
+      const data = await cloned.json()
+      if (data.msg_cd === 'EGW00123' || data.msg_cd === 'EGW00121') {
+        console.log(`[KIS] 토큰 만료 감지 (${data.msg_cd}: ${data.msg1}) — 재발급 시도`)
+        invalidateToken(mode)
+        const newHeaders = await getHeaders(mode, trId)
+        res = await fetch(url, { ...options, headers: newHeaders })
+      }
+    } catch { /* JSON 파싱 실패 시 무시 */ }
+  }
+
+  return res
 }
 
 /** hashkey 발급 */
@@ -189,6 +248,27 @@ const defaultMode = (): TradingMode =>
 
 /** 레거시: OAuth 토큰 (기존 호환) */
 export const getKisToken = async (): Promise<string> => getToken(defaultMode())
+
+/** 토큰 강제 리셋 — 만료 에러 발생 시 호출 */
+export const resetKisToken = (mode?: TradingMode) => {
+  const m = mode ?? defaultMode()
+  invalidateToken(m)
+}
+
+/** 모든 모드 토큰 리셋 + 파일 삭제 */
+export const resetAllKisTokens = () => {
+  invalidateToken('real')
+  invalidateToken('mock')
+  // 파일 자체를 삭제
+  if (typeof window !== 'undefined') return
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+    const filePath = path.join(process.cwd(), TOKEN_FILE_PATH)
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+    console.log('[KIS] 모든 토큰 리셋 완료 — .kis-tokens.json 삭제')
+  } catch { /* ignore */ }
+}
 
 // ─── 잔고 조회 ──────────────────────────────────────
 
