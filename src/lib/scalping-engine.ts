@@ -70,23 +70,18 @@ const MAX_PER_SECTOR = 2 // 동일 섹터 최대 보유 종목 수
 // ─── 손실 레벨 (단계별 리스크 관리) ────────────────
 export type LossLevel = 'normal' | 'conservative' | 'recovery' | 'full-stop'
 
-const LOSS_THRESHOLDS: { level: LossLevel; pct: number }[] = [
-  { level: 'full-stop',    pct: -0.08 },  // -8%: 매수 완전 차단 (매도만)
-  { level: 'recovery',     pct: -0.05 },  // -5%: 최소 매수 (수급 필수)
-  { level: 'conservative', pct: -0.03 },  // -3%: 보수적 매수
-]
-
+// 손실 레벨은 절대금액 기준 (예산 비율 아님)
 const LOSS_LABELS: Record<LossLevel, string> = {
   'normal':       '정상 모드',
-  'conservative': '보수적 모드 (-3% 도달)',
-  'recovery':     '복구 모드 (-5% 도달)',
-  'full-stop':    '완전 중단 (-8% 도달, 매도만 허용)',
+  'conservative': '보수적 모드 (일손익 -10만원)',
+  'recovery':     '복구 모드 (일손익 -20만원)',
+  'full-stop':    '완전 중단 (일손익 -30만원, 매도만 허용)',
 }
 
-const determineLossLevel = (pnl: number, budget: number): LossLevel => {
-  for (const t of LOSS_THRESHOLDS) {
-    if (pnl < budget * t.pct) return t.level
-  }
+const determineLossLevel = (pnl: number, _budget: number): LossLevel => {
+  if (pnl <= -300000) return 'full-stop'    // -30만원: 매수 완전 차단
+  if (pnl <= -200000) return 'recovery'     // -20만원: 최소 매수 (수급 필수)
+  if (pnl <= -100000) return 'conservative' // -10만원: 보수적 매수
   return 'normal'
 }
 
