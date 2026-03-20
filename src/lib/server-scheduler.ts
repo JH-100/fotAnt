@@ -32,7 +32,9 @@ const loadAndRestore = () => {
 
 const persistLogs = () => {
   try {
-    const logs = getScalpingLogs().slice(0, 200)
+    // getScalpingLogs()는 reverse된 상태 → 다시 reverse해서 원본 순서로 저장
+    // (복원 시 restoreLogs가 원본 순서를 기대하므로)
+    const logs = getScalpingLogs().slice(0, 200).reverse()
     writeFileSync(LOG_FILE, JSON.stringify(logs), 'utf-8')
   } catch { /* ignore */ }
 }
