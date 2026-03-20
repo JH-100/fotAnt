@@ -1,4 +1,5 @@
 // 자율 종목 스캐너 — KIS 거래량순위 + AI추천 + 분봉/일봉 지표 분석
+// ═══ 성능 최적화: 일봉/수급/분봉 캐싱 + 배치 확대 + 사전필터 + 병렬호출 ═══
 import { getKisMinutePrices, getKisVolumeRank, getKisDailyPrices, aggregateMinuteBars, getKisInvestorTrading } from './kis-api'
 import type { TradingMode } from './kis-api'
 import {
@@ -12,6 +13,41 @@ import {
   getRSISignal, getMACDSignal, getMASignal, getVolumeSignal,
 } from './indicators'
 import type { MinutePrice, DailyPrice } from '@/types/kis'
+
+// ═══════════════════════════════════════════════════════
+// 캐시 레이어 — API 호출 최소화
+// ═══════════════════════════════════════════════════════
+
+/** 일봉 캐시: 장중에 안 바뀌므로 당일 재사용 */
+const dailyCache = new Map<string, { data: DailyPrice[]; fetchedDate: string }>()
+
+const getCachedDailyPrices = async (code: string, days: number, mode?: TradingMode): Promise<DailyPrice[]> => {
+  const today = new Date().toISOString().slice(0, 10)
+  const key = `${code}-${days}`
+  const cached = dailyCache.get(key)
+  if (cached && cached.fetchedDate === today) return cached.data
+  const data = await getKisDailyPrices(code, days, mode)
+  dailyCache.set(key, { data, fetchedDate: today })
+  return data
+}
+
+/** 투자자 매매동향 캐시: 10분 TTL */
+const investorCache = new Map<string, { data: { foreignNetBuy: number; institutionNetBuy: number }; fetchedAt: number }>()
+const INVESTOR_CACHE_TTL = 10 * 60 * 1000 // 10분
+
+const getCachedInvestorTrading = async (code: string, mode?: TradingMode) => {
+  const now = Date.now()
+  const cached = investorCache.get(code)
+  if (cached && (now - cached.fetchedAt) < INVESTOR_CACHE_TTL) return cached.data
+  const investor = await getKisInvestorTrading(code, mode)
+  const data = { foreignNetBuy: investor.foreignNetBuy, institutionNetBuy: investor.institutionNetBuy }
+  investorCache.set(code, { data, fetchedAt: now })
+  return data
+}
+
+/** 분봉 분석 결과 캐시: 3분 TTL (사이클 간 중복 방지) */
+const minuteResultCache = new Map<string, { result: ScanResult; fetchedAt: number }>()
+const MINUTE_CACHE_TTL = 3 * 60 * 1000 // 3분
 
 // ─── 커스텀 워치리스트 파일 저장 (서버 전용, 동적 require) ───
 const getWatchlistPath = () => {
@@ -217,12 +253,21 @@ const analyzeWithMinuteBars = async (
     score += Math.round(18 * pattern.confidence); reasons.push(`패턴: ${pattern.description}`)
   }
 
-  // ★ 멀티 타임프레임 정렬 (1분봉 + 5분봉 + 일봉)
+  // ★ 멀티 타임프레임 + 수급: 일봉과 수급을 병렬로 조회 (캐시 활용)
   let dailyCloses: number[] = []
-  try {
-    const dailyData = await getKisDailyPrices(code, 10, mode)
-    dailyCloses = dailyData.map(d => d.close)
-  } catch { /* 일봉 실패 시 무시 */ }
+  let foreignNet = 0, instNet = 0
+  const [dailyResult, investorResult] = await Promise.allSettled([
+    getCachedDailyPrices(code, 10, mode),
+    getCachedInvestorTrading(code, mode),
+  ])
+  if (dailyResult.status === 'fulfilled') {
+    dailyCloses = dailyResult.value.map(d => d.close)
+  }
+  if (investorResult.status === 'fulfilled') {
+    foreignNet = investorResult.value.foreignNetBuy
+    instNet = investorResult.value.institutionNetBuy
+  }
+
   const mtf = calcMultiTimeframeAlignment(sorted1, sorted5, dailyCloses)
   if (mtf.aligned && mtf.direction === 'bullish') {
     score += 12; reasons.push('멀티TF 상승정렬')
@@ -230,23 +275,16 @@ const analyzeWithMinuteBars = async (
     score -= 10; reasons.push('멀티TF 하락정렬')
   }
 
-  // ★ 외국인/기관 수급 (API 조회 — 실패해도 무시)
-  let foreignNet = 0, instNet = 0
-  try {
-    const investor = await getKisInvestorTrading(code, mode)
-    foreignNet = investor.foreignNetBuy
-    instNet = investor.institutionNetBuy
-    // 외국인+기관 동반 순매수 → 강한 가점
-    if (foreignNet > 0 && instNet > 0) {
-      score += 15; reasons.push(`외국인+기관 동반매수`)
-    } else if (foreignNet > 0) {
-      score += 8; reasons.push(`외국인 순매수`)
-    } else if (instNet > 0) {
-      score += 6; reasons.push(`기관 순매수`)
-    } else if (foreignNet < 0 && instNet < 0) {
-      score -= 10; reasons.push(`외국인+기관 동반매도`)
-    }
-  } catch { /* 수급 조회 실패 무시 */ }
+  // ★ 외국인/기관 수급 (캐시에서 조회됨)
+  if (foreignNet > 0 && instNet > 0) {
+    score += 15; reasons.push(`외국인+기관 동반매수`)
+  } else if (foreignNet > 0) {
+    score += 8; reasons.push(`외국인 순매수`)
+  } else if (instNet > 0) {
+    score += 6; reasons.push(`기관 순매수`)
+  } else if (foreignNet < 0 && instNet < 0) {
+    score -= 10; reasons.push(`외국인+기관 동반매도`)
+  }
 
   // 익절/손절 — 스프레드 비용 반영
   let takeProfitPercent = Math.max(0.5, Math.min(4, atrPercent * 3))
@@ -282,11 +320,11 @@ const analyzeWithMinuteBars = async (
 // 일봉 폴백 분석 (장외시간 또는 분봉 실패 시)
 // ════════════════════════════════════════════════════
 
-/** 일봉 기반 분석 (분봉 실패 시 폴백) */
+/** 일봉 기반 분석 (분봉 실패 시 폴백) — 캐시 활용 */
 const analyzeWithDailyBars = async (
   code: string, name: string, price: number, change: number, mode?: TradingMode
 ): Promise<ScanResult | null> => {
-  const data = await getKisDailyPrices(code, 60, mode)
+  const data = await getCachedDailyPrices(code, 60, mode)
   if (data.length < 20) return null
 
   const closes = data.map(d => d.close)
@@ -393,14 +431,24 @@ const analyzeWithDailyBars = async (
 // 통합 분석 — 분봉 우선, 실패 시 일봉 폴백
 // ════════════════════════════════════════════════════
 
-/** 개별 종목 분석 — 분봉 시도 → 실패 시 일봉 폴백 */
+/** 개별 종목 분석 — 캐시 확인 → 분봉 시도 → 일봉 폴백 */
 const analyzeStock = async (
   code: string, name: string, price: number, change: number, mode?: TradingMode
 ): Promise<ScanResult | null> => {
+  // 캐시 확인: 3분 내 분석된 결과가 있으면 재사용
+  const now = Date.now()
+  const cached = minuteResultCache.get(code)
+  if (cached && (now - cached.fetchedAt) < MINUTE_CACHE_TTL) {
+    return cached.result
+  }
+
   try {
     // 1차: 분봉 분석 시도
     const minuteResult = await analyzeWithMinuteBars(code, name, price, change, mode)
-    if (minuteResult) return minuteResult
+    if (minuteResult) {
+      minuteResultCache.set(code, { result: minuteResult, fetchedAt: now })
+      return minuteResult
+    }
   } catch { /* 분봉 실패 → 일봉 시도 */ }
 
   try {
@@ -563,13 +611,13 @@ const getAIRecommendations = async (
   console.log(`[AI추천] 워치리스트 ${targets.length}종목 분석 시작`)
   const results: { code: string; name: string; price: number; change: number; aiScore: number }[] = []
 
-  // 5개씩 병렬 분석 (API rate limit 고려)
-  const batchSize = 5
+  // 8개씩 병렬 분석 (일봉 캐시 활용으로 API 부담 감소)
+  const batchSize = 8
   for (let i = 0; i < targets.length; i += batchSize) {
     const batch = targets.slice(i, i + batchSize)
     const batchResults = await Promise.allSettled(
       batch.map(async (stock) => {
-        const data = await getKisDailyPrices(stock.code, 60, mode)
+        const data = await getCachedDailyPrices(stock.code, 60, mode)
         if (data.length < 20) return null
 
         const signals = [getRSISignal(data), getMACDSignal(data), getMASignal(data), getVolumeSignal(data)]
@@ -595,7 +643,7 @@ const getAIRecommendations = async (
     for (const r of batchResults) {
       if (r.status === 'fulfilled' && r.value) results.push(r.value)
     }
-    if (i + batchSize < targets.length) await new Promise(resolve => setTimeout(resolve, 300))
+    if (i + batchSize < targets.length) await new Promise(resolve => setTimeout(resolve, 150))
   }
 
   return results.sort((a, b) => b.aiScore - a.aiScore)
@@ -607,14 +655,21 @@ const getAIRecommendations = async (
 
 /** 시장 전체 스캔 — KIS 거래량순위 + AI추천 + 분봉/일봉 분석 */
 export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
-  // 1. KIS 거래량 순위 — ETF/레버리지/인버스 제외, 가격 500원 이상
+  // 1. KIS 거래량 순위 — ETF 제외 + 사전 필터링 (급락/과열/저유동성 제외)
   let trending: { code: string; name: string; price: number; change: number }[]
   try {
     const rank = await getKisVolumeRank(mode)
-    trending = rank
-      .filter(r => r.price >= 500 && !isETF(r.name))
+    const filtered = rank.filter(r => r.price >= 500 && !isETF(r.name))
+    // ★ 사전 필터링: 분봉 분석 전에 명확한 비대상 제거 → API 절약
+    trending = filtered
+      .filter(r => {
+        if (r.change < -5) return false  // 급락주 제외 (하락 추세)
+        if (r.change > 15) return false  // 과열주 제외 (추격매수 위험)
+        return true
+      })
       .map(r => ({ code: r.code, name: r.name, price: r.price, change: r.change }))
-    console.log(`[스캐너] KIS 거래량순위 ${rank.length}종목 중 ${trending.length}종목 대상 (ETF/레버리지/인버스 제외)`)
+    const excluded = filtered.length - trending.length
+    console.log(`[스캐너] KIS 거래량순위 ${rank.length}종목 중 ${trending.length}종목 대상 (ETF제외${filtered.length}, 필터${excluded}제외)`)
   } catch (err) {
     console.log(`[스캐너] KIS 거래량순위 조회 실패: ${err instanceof Error ? err.message : String(err)}`)
     trending = []
@@ -643,12 +698,13 @@ export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
 
   console.log(`[스캐너] 총 ${trending.length}종목 분석 시작 (거래량${trending.length - aiCount} + AI${aiCount})`)
 
-  // 3. 병렬 분석 (분봉 우선 → 일봉 폴백, 3개씩 배치)
+  // 3. 병렬 분석 (분봉 우선 → 일봉 폴백, 5개씩 배치 + 캐시 활용)
   const results: ScanResult[] = []
   let failCount = 0
   let minuteCount = 0
   let dailyCount = 0
-  const batchSize = 3
+  const batchSize = 5
+  const scanStart = Date.now()
 
   for (let i = 0; i < trending.length; i += batchSize) {
     const batch = trending.slice(i, i + batchSize)
@@ -665,9 +721,10 @@ export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
       }
     }
     if (i + batchSize < trending.length) {
-      await new Promise((resolve) => setTimeout(resolve, 300))
+      await new Promise((resolve) => setTimeout(resolve, 150))
     }
   }
+  const scanElapsed = ((Date.now() - scanStart) / 1000).toFixed(1)
 
   if (failCount > 0) {
     console.log(`[스캐너] ${failCount}/${trending.length}종목 분석 실패`)
@@ -676,6 +733,7 @@ export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
   const sorted = results.sort((a, b) => b.score - a.score)
   const buyCount = sorted.filter(s => s.signal === 'BUY').length
   const topStock = sorted[0]
-  console.log(`[스캐너] 분석 완료: ${results.length}종목(분봉${minuteCount}+일봉${dailyCount}) / BUY ${buyCount}개 / 최고 ${topStock?.score ?? 0}점(${topStock?.name ?? '-'})`)
+  const cacheStats = `일봉캐시${dailyCache.size}건 수급캐시${investorCache.size}건 분봉캐시${minuteResultCache.size}건`
+  console.log(`[스캐너] 분석 완료 ${scanElapsed}초: ${results.length}종목(분봉${minuteCount}+일봉${dailyCount}) / BUY ${buyCount}개 / 최고 ${topStock?.score ?? 0}점(${topStock?.name ?? '-'}) [${cacheStats}]`)
   return sorted
 }
