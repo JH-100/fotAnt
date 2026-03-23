@@ -828,10 +828,24 @@ const executeBuy = async (
   const orderType = getOrderType()
   const needsPrice = orderType === 'after-hours' || orderType === 'after-close'
 
+  // 시간외 주문 시 현재가 조회 (스캔가격은 일봉 종가라 호가 범위 밖일 수 있음)
+  let orderPrice = price
+  let orderQty = quantity
+  if (needsPrice) {
+    try {
+      const realPrice = await getKisCurrentPrice(code, config.mode)
+      if (realPrice > 0) {
+        orderPrice = realPrice
+        orderQty = Math.floor((quantity * price) / realPrice) // 투자금 기준 수량 재계산
+        if (orderQty <= 0) orderQty = 1
+      }
+    } catch { /* 현재가 조회 실패 시 스캔가격 사용 */ }
+  }
+
   try {
     const result = await placeKisOrder({
-      side: 'buy', code, quantity,
-      price: needsPrice ? price : undefined,
+      side: 'buy', code, quantity: orderQty,
+      price: needsPrice ? orderPrice : undefined,
       orderType: orderType as 'market' | 'limit' | 'pre-market' | 'after-close' | 'after-hours',
     }, config.mode)
 

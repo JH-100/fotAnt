@@ -41,7 +41,7 @@ const SECTOR_MAP: Record<string, string> = {
 
 // ─── Constants ────────────────────────────────────────────────────────
 const NEWS_KEYWORDS = ['급등', '수주', '실적', '상한가', 'FDA', '계약', '흑자전환', '신고가', '대규모']
-const NAVER_API_URL = 'https://openssl.naver.com/v1/search/news.json'
+const NAVER_API_URL = 'https://openapi.naver.com/v1/search/news.json'
 const NEWS_CACHE_TTL = 5 * 60 * 1000       // 5분
 const NEWS_HOT_THRESHOLD = 2               // 2건 이상이면 hot
 const NEWS_TIME_WINDOW = 30 * 60 * 1000    // 30분

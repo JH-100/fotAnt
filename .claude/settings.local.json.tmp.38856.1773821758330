@@ -86,21 +86,7 @@
       "Bash(dir .scalping-*)",
       "WebFetch(domain:open.shinhansec.com)",
       "Read(//c/Users/USER/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/c64709b3-f166-42f1-afb1-21173bc20ca0/f12e0578-4967-4e87-8e1a-ffe4a6f4d2ec/skills/xlsx/**)",
-      "Bash(pip install:*)",
-      "Bash(where pip3:*)",
-      "Bash(where pip:*)",
-      "Bash(where python3:*)",
-      "Bash(where python:*)",
-      "Bash(curl -s http://localhost:3000/api/stock-search?q=%ED%98%84%EB%8C%80%EC%B0%A8)",
-      "Bash(curl -s http://localhost:3000/api/stock-search?q=%EC%82%BC%EC%84%B1)",
-      "Bash(curl -s http://localhost:3000/api/stock-search?q=%E3%85%8E%E3%84%B7%E3%85%8E)",
-      "Bash(node -e \"console.log\\(encodeURIComponent\\(''ㅎㄷㅊ''\\)\\)\")",
-      "Bash(curl -s http://localhost:3000/api/stock-search?q=%E3%85%8E%E3%84%B7%E3%85%8A)",
-      "Bash(curl -s http://localhost:3000/api/stock-search?q=005930)",
-      "Bash(node -e \"let d='''''''';process.stdin.on\\(''''data'''',c=>d+=c\\);process.stdin.on\\(''''end'''',\\(\\)=>{const j=JSON.parse\\(d\\);j.forEach\\(s=>console.log\\(s.code,s.name\\)\\)}\\)\")",
-      "Bash(curl -s http://localhost:3000/api/watchlist)",
-      "Bash(curl -s -X POST http://localhost:3000/api/watchlist -H \"Content-Type: application/json\" -d \"{\"\"action\"\":\"\"add\"\",\"\"code\"\":\"\"011170\"\",\"\"name\"\":\"\"롯데케미칼\"\"}\")",
-      "Bash(find /c/ceJava/htdocs/forAnt/src -name *cache* -o -name *Cache*)"
+      "Bash(pip install:*)"
     ]
   }
 }
