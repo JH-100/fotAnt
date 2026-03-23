@@ -709,8 +709,19 @@ export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
       if (!rankCodes.has(hot.code) && !trending.find(t => t.code === hot.code)) {
         const stock = allStocks.find(s => s.code === hot.code)
         if (stock) {
-          trending.push({ code: hot.code, name: hot.name, price: 0, change: 0 })
-          console.log(`[스캐너 ${logTime()}] 뉴스 핫 종목 추가: ${hot.name} (${hot.newsCount}건, ${hot.keywords.join('/')})`)
+          // 현재가를 일봉 캐시에서 조회, 없으면 API 호출
+          let hotPrice = 0
+          try {
+            const dailyData = await getCachedDailyPrices(hot.code, 10, mode)
+            if (dailyData.length > 0) hotPrice = dailyData[dailyData.length - 1].close
+          } catch { /* ignore */ }
+          if (hotPrice > 0) {
+            const prevPrice = hotPrice // 일봉 마지막 종가 기준 변화율은 0으로 근사
+            trending.push({ code: hot.code, name: hot.name, price: hotPrice, change: 0 })
+            console.log(`[스캐너 ${logTime()}] 뉴스 핫 종목 추가: ${hot.name} (${hot.newsCount}건, ${hot.keywords.join('/')}) ${hotPrice.toLocaleString()}원`)
+          } else {
+            console.log(`[스캐너 ${logTime()}] 뉴스 핫 종목 스킵: ${hot.name} — 가격 조회 실패`)
+          }
         }
       }
     }
