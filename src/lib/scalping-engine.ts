@@ -502,27 +502,11 @@ const _executeScalpingCycleInner = async (
         }
       }
 
-      // ★ 하드스탑 -3%: 어떤 상황이든 -3% 넘으면 무조건 즉시 매도
-      if (pnlPercent <= -3) {
-        console.log(`[스캘핑 ${logTime()}] ${holding.name} 하드스탑 발동! ${pnlPercent.toFixed(1)}% (한도 -3%)`)
-        const log = await executeSell(
-          holding.code, holding.name, holding.quantity, holding.currentPrice,
-          `🚨 하드스탑 ${pnlPercent.toFixed(1)}% — 최대 손실 -3% 초과`,
-          config
-        )
-        if (log) {
-          newLogs.push(log)
-          if (log.result === 'success') {
-            dailyPnL += holding.profitLoss
-            delete positionMetas[holding.code]
-          }
-        }
-      }
       // 전량 익절 (분할익절 이후 잔량 또는 1주만 보유 시)
-      else if (pnlPercent >= tp) {
+      if (pnlPercent >= tp) {
         const log = await executeSell(
           holding.code, holding.name, holding.quantity, holding.currentPrice,
-          `🎯 ${meta?.firstPartialSold ? '2차 ' : ''}익절 ${pnlPercent.toFixed(1)}% (목표 ${tp.toFixed(1)}%, ATR 기반)`,
+          `${meta?.firstPartialSold ? '2차 ' : ''}익절 ${pnlPercent.toFixed(1)}% (목표 ${tp.toFixed(1)}%, ATR 기반)`,
           config
         )
         if (log) {

@@ -697,6 +697,46 @@ export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
     console.log(`[스캐너 ${logTime()}] AI추천 조회 실패 (무시): ${err instanceof Error ? err.message : String(err)}`)
   }
 
+  // 2.5. 뉴스 스캐닝 — 뉴스 핫 종목 가점 (네이버 API)
+  let newsHotCodes = new Set<string>()
+  try {
+    const { scanNewsForStocks } = await import('./news-scanner')
+    const allStocks = getAIWatchList()
+    const hotStocks = await scanNewsForStocks(allStocks)
+    for (const hot of hotStocks) {
+      newsHotCodes.add(hot.code)
+      // 뉴스 핫 종목이 trending에 없으면 추가
+      if (!rankCodes.has(hot.code) && !trending.find(t => t.code === hot.code)) {
+        const stock = allStocks.find(s => s.code === hot.code)
+        if (stock) {
+          trending.push({ code: hot.code, name: hot.name, price: 0, change: 0 })
+          console.log(`[스캐너 ${logTime()}] 뉴스 핫 종목 추가: ${hot.name} (${hot.newsCount}건, ${hot.keywords.join('/')})`)
+        }
+      }
+    }
+    if (hotStocks.length > 0) {
+      console.log(`[스캐너 ${logTime()}] 뉴스 핫 ${hotStocks.length}종목: ${hotStocks.map(h => h.name).join(', ')}`)
+    }
+  } catch { /* 뉴스 스캐닝 실패 무시 */ }
+
+  // 2.6. 급등 종목 우선 분석 (change > +5% 먼저)
+  try {
+    const { prioritizeSurgeStocks } = await import('./news-scanner')
+    trending = prioritizeSurgeStocks(trending)
+  } catch { /* 우선순위 실패 무시 */ }
+
+  // 2.7. 섹터 모멘텀 감지
+  let hotSectors = new Set<string>()
+  try {
+    const { detectSectorMomentum } = await import('./news-scanner')
+    const momentum = detectSectorMomentum(trending)
+    const hotOnes = momentum.filter(m => m.isHot)
+    for (const m of hotOnes) hotSectors.add(m.sector)
+    if (hotOnes.length > 0) {
+      console.log(`[스캐너 ${logTime()}] 섹터 모멘텀: ${hotOnes.map(m => `${m.sector}(+${m.avgChange.toFixed(1)}%)`).join(', ')}`)
+    }
+  } catch { /* 섹터 모멘텀 실패 무시 */ }
+
   if (trending.length === 0) {
     console.log('[스캐너] 분석 대상 0종목 — 스캔 종료')
     return []
@@ -734,6 +774,15 @@ export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
 
   if (failCount > 0) {
     console.log(`[스캐너 ${logTime()}] ${failCount}/${trending.length}종목 분석 실패`)
+  }
+
+  // ★ 뉴스 핫 종목 가점
+  for (const r of results) {
+    if (newsHotCodes.has(r.code)) {
+      r.score += 10
+      r.reasons.push('뉴스 핫 종목')
+      if (r.score >= 25 && r.signal === 'HOLD') r.signal = 'BUY'
+    }
   }
 
   const sorted = results.sort((a, b) => b.score - a.score)
