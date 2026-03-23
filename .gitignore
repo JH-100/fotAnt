@@ -45,3 +45,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# temp files
+*.tmp.*
+start-app.cmd
+pm2-start.js
+server.log
+server-error.log
+
+# trading reports (runtime generated)
+.trading-reports/
