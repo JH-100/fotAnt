@@ -354,15 +354,14 @@ const getExitThresholds = async (code: string, currentPrice: number, mode?: Trad
       const bars5 = aggregateMinuteBars(rawBars, 5)
       const atr = calcMinuteATR(bars5, 10)
       const atrPct = currentPrice > 0 ? (atr / currentPrice) * 100 : 1
-      return {
-        tp: Math.max(0.5, Math.min(4, atrPct * 3)),
-        sl: Math.max(0.3, Math.min(2.5, atrPct * 2)),
-      }
+      const sl = Math.max(0.8, Math.min(1.5, atrPct * 1.5))  // 손절: 0.8~1.5%
+      const tp = Math.max(sl * 1.5, Math.min(5, atrPct * 3), 2.0)  // 익절: 손절의 1.5배+, 최소 2%
+      return { tp, sl }
     }
   } catch { /* fallback */ }
 
-  // 기본값 (스캘핑용 타이트)
-  return { tp: 1.5, sl: 1 }
+  // 기본값
+  return { tp: 2.5, sl: 1.5 }
 }
 
 /** 잔고 조회 (최대 2회 재시도) */
@@ -430,6 +429,22 @@ const _executeScalpingCycleInner = async (
       // 에프터마켓: 스프레드 넓으므로 익절/손절 기준 1.5배로 확대
       if (isAfterMarketTime()) { tp *= 1.5; sl *= 1.5 }
 
+      // ★ 하드 손절: 어떤 경우에도 -3% 넘으면 즉시 매도 (갭 하락 보호)
+      const HARD_STOP = -3.0
+      if (pnlPercent <= HARD_STOP) {
+        console.log(`[스캘핑] ${holding.name} 하드 손절 발동 — ${pnlPercent.toFixed(1)}% (한도 ${HARD_STOP}%)`)
+        const log = await executeSell(
+          holding.code, holding.name, holding.quantity, holding.currentPrice,
+          `하드 손절 ${pnlPercent.toFixed(1)}% (갭 하락 보호 ${HARD_STOP}%)`,
+          config
+        )
+        if (log) {
+          newLogs.push(log)
+          if (log.result === 'success') { dailyPnL += holding.profitLoss; delete positionMetas[holding.code] }
+        }
+        continue
+      }
+
       // ★ 트레일링 스탑: 매수 후 최고가 갱신 추적
       if (meta) {
         if (holding.currentPrice > meta.highWaterMark) {
@@ -455,9 +470,9 @@ const _executeScalpingCycleInner = async (
           continue
         }
 
-        // ★ 분할 익절: 1차 목표(tp의 60%) 도달 시 보유량 50% 매도
-        if (!meta.firstPartialSold && pnlPercent >= tp * 0.6 && holding.quantity >= 2) {
-          const partialQty = Math.floor(holding.quantity * 0.5)
+        // ★ 분할 익절: 1차 목표(tp의 80%) 도달 시 보유량 30% 매도 (나머지 70%는 트레일링)
+        if (!meta.firstPartialSold && pnlPercent >= tp * 0.8 && holding.quantity >= 2) {
+          const partialQty = Math.floor(holding.quantity * 0.3)
           if (partialQty > 0) {
             console.log(`[스캘핑] ${holding.name} 1차 분할익절 — ${pnlPercent.toFixed(1)}% (목표 ${tp.toFixed(1)}%의 60%) → ${partialQty}/${holding.quantity}주 매도`)
             const log = await executeSell(
