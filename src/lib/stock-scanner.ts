@@ -14,6 +14,11 @@ import {
 } from './indicators'
 import type { MinutePrice, DailyPrice } from '@/types/kis'
 
+const logTime = () => {
+  const d = new Date()
+  return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 // ═══════════════════════════════════════════════════════
 // 캐시 레이어 — API 호출 최소화
 // ═══════════════════════════════════════════════════════
@@ -71,7 +76,7 @@ const saveCustomWatchList = (list: { code: string; name: string }[]) => {
     const fs = require('fs') as typeof import('fs')
     fs.writeFileSync(getWatchlistPath(), JSON.stringify(list), 'utf-8')
   } catch (err) {
-    console.log(`[스캐너] 워치리스트 저장 실패: ${err}`)
+    console.log(`[스캐너 ${logTime()}] 워치리스트 저장 실패: ${err}`)
   }
 }
 
@@ -579,7 +584,7 @@ export const addToWatchList = (code: string, name: string) => {
   if (isETF(name)) return
   customWatchList.push({ code, name })
   saveCustomWatchList(customWatchList)
-  console.log(`[스캐너] 워치리스트 추가: ${name}(${code}) — 총 ${STOCK_MASTER.length + customWatchList.length}종목`)
+  console.log(`[스캐너 ${logTime()}] 워치리스트 추가: ${name}(${code}) — 총 ${STOCK_MASTER.length + customWatchList.length}종목`)
 }
 
 /** 커스텀 워치리스트 제거 */
@@ -609,7 +614,7 @@ const getAIRecommendations = async (
   const targets = getAIWatchList().filter(s => !excludeCodes?.has(s.code))
   if (targets.length === 0) return []
 
-  console.log(`[AI추천] 워치리스트 ${targets.length}종목 분석 시작`)
+  console.log(`[AI추천 ${logTime()}] 워치리스트 ${targets.length}종목 분석 시작`)
   const results: { code: string; name: string; price: number; change: number; aiScore: number }[] = []
 
   // 8개씩 병렬 분석 (일봉 캐시 활용으로 API 부담 감소)
@@ -670,9 +675,9 @@ export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
       })
       .map(r => ({ code: r.code, name: r.name, price: r.price, change: r.change }))
     const excluded = filtered.length - trending.length
-    console.log(`[스캐너] KIS 거래량순위 ${rank.length}종목 중 ${trending.length}종목 대상 (ETF제외${filtered.length}, 필터${excluded}제외)`)
+    console.log(`[스캐너 ${logTime()}] KIS 거래량순위 ${rank.length}종목 중 ${trending.length}종목 대상 (ETF제외${filtered.length}, 필터${excluded}제외)`)
   } catch (err) {
-    console.log(`[스캐너] KIS 거래량순위 조회 실패: ${err instanceof Error ? err.message : String(err)}`)
+    console.log(`[스캐너 ${logTime()}] KIS 거래량순위 조회 실패: ${err instanceof Error ? err.message : String(err)}`)
     trending = []
   }
 
@@ -686,10 +691,10 @@ export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
       aiCount++
     }
     if (aiCount > 0) {
-      console.log(`[스캐너] AI추천 ${aiPicks.length}종목 중 ${aiCount}종목 추가 (${aiPicks.slice(0, 5).map(p => `${p.name}(${p.aiScore}점)`).join(', ')})`)
+      console.log(`[스캐너 ${logTime()}] AI추천 ${aiPicks.length}종목 중 ${aiCount}종목 추가 (${aiPicks.slice(0, 5).map(p => `${p.name}(${p.aiScore}점)`).join(', ')})`)
     }
   } catch (err) {
-    console.log(`[스캐너] AI추천 조회 실패 (무시): ${err instanceof Error ? err.message : String(err)}`)
+    console.log(`[스캐너 ${logTime()}] AI추천 조회 실패 (무시): ${err instanceof Error ? err.message : String(err)}`)
   }
 
   if (trending.length === 0) {
@@ -697,7 +702,7 @@ export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
     return []
   }
 
-  console.log(`[스캐너] 총 ${trending.length}종목 분석 시작 (거래량${trending.length - aiCount} + AI${aiCount})`)
+  console.log(`[스캐너 ${logTime()}] 총 ${trending.length}종목 분석 시작 (거래량${trending.length - aiCount} + AI${aiCount})`)
 
   // 3. 병렬 분석 (분봉 우선 → 일봉 폴백, 5개씩 배치 + 캐시 활용)
   const results: ScanResult[] = []
@@ -728,13 +733,13 @@ export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
   const scanElapsed = ((Date.now() - scanStart) / 1000).toFixed(1)
 
   if (failCount > 0) {
-    console.log(`[스캐너] ${failCount}/${trending.length}종목 분석 실패`)
+    console.log(`[스캐너 ${logTime()}] ${failCount}/${trending.length}종목 분석 실패`)
   }
 
   const sorted = results.sort((a, b) => b.score - a.score)
   const buyCount = sorted.filter(s => s.signal === 'BUY').length
   const topStock = sorted[0]
   const cacheStats = `일봉캐시${dailyCache.size}건 수급캐시${investorCache.size}건 분봉캐시${minuteResultCache.size}건`
-  console.log(`[스캐너] 분석 완료 ${scanElapsed}초: ${results.length}종목(분봉${minuteCount}+일봉${dailyCount}) / BUY ${buyCount}개 / 최고 ${topStock?.score ?? 0}점(${topStock?.name ?? '-'}) [${cacheStats}]`)
+  console.log(`[스캐너 ${logTime()}] 분석 완료 ${scanElapsed}초: ${results.length}종목(분봉${minuteCount}+일봉${dailyCount}) / BUY ${buyCount}개 / 최고 ${topStock?.score ?? 0}점(${topStock?.name ?? '-'}) [${cacheStats}]`)
   return sorted
 }

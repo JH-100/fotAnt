@@ -60,7 +60,7 @@ const TradeLog = () => {
                     {log.price.toLocaleString()}원
                   </p>
                   <p className="text-[9px] text-muted-foreground">
-                    {new Date(log.timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+                    {new Date(log.timestamp).toLocaleDateString('ko-KR', { month: '2-digit', day: '2-digit' })} {new Date(log.timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
                   </p>
                 </div>
               </div>

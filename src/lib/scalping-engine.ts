@@ -1,4 +1,14 @@
 // 자율 스캘핑 엔진 — 종목 탐색 + 동적 익절/손절 전부 봇이 결정
+// 로그 타임스탬프 헬퍼 (MM/DD HH:mm)
+const logTime = () => {
+  const d = new Date()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mi = String(d.getMinutes()).padStart(2, '0')
+  return `${mm}/${dd} ${hh}:${mi}`
+}
+
 import type { KisBalance } from '@/types/kis'
 import { getKisBalance, getKisMinutePrices, aggregateMinuteBars, placeKisOrder, getKisCurrentPrice } from './kis-api'
 import type { TradingMode } from './kis-api'
@@ -371,7 +381,7 @@ const getBalanceSafe = async (mode: TradingMode): Promise<KisBalance | null> => 
       return await getKisBalance(mode)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      console.log(`[스캘핑] 잔고 조회 실패 (${attempt}/2): ${msg}`)
+      console.log(`[스캘핑 ${logTime()}] 잔고 조회 실패 (${attempt}/2): ${msg}`)
       if (attempt < 2) await new Promise(r => setTimeout(r, 2000))
     }
   }
@@ -408,10 +418,10 @@ const _executeScalpingCycleInner = async (
   const prevLevel = currentLossLevel
   currentLossLevel = determineLossLevel(dailyPnL, config.budget)
   if (currentLossLevel !== prevLevel) {
-    console.log(`[스캘핑] 모드 전환: ${LOSS_LABELS[prevLevel]} → ${LOSS_LABELS[currentLossLevel]} (일손익 ${dailyPnL.toLocaleString()}원)`)
+    console.log(`[스캘핑 ${logTime()}] 모드 전환: ${LOSS_LABELS[prevLevel]} → ${LOSS_LABELS[currentLossLevel]} (일손익 ${dailyPnL.toLocaleString()}원)`)
   }
   if (currentLossLevel !== 'normal') {
-    console.log(`[스캘핑] 현재 ${LOSS_LABELS[currentLossLevel]} — 일손익 ${dailyPnL.toLocaleString()}원`)
+    console.log(`[스캘핑 ${logTime()}] 현재 ${LOSS_LABELS[currentLossLevel]} — 일손익 ${dailyPnL.toLocaleString()}원`)
   }
 
   // 1. 잔고 조회 (실패해도 스캔은 계속)
@@ -432,7 +442,7 @@ const _executeScalpingCycleInner = async (
       // ★ 하드 손절: 어떤 경우에도 -3% 넘으면 즉시 매도 (갭 하락 보호)
       const HARD_STOP = -3.0
       if (pnlPercent <= HARD_STOP) {
-        console.log(`[스캘핑] ${holding.name} 하드 손절 발동 — ${pnlPercent.toFixed(1)}% (한도 ${HARD_STOP}%)`)
+        console.log(`[스캘핑 ${logTime()}] ${holding.name} 하드 손절 발동 — ${pnlPercent.toFixed(1)}% (한도 ${HARD_STOP}%)`)
         const log = await executeSell(
           holding.code, holding.name, holding.quantity, holding.currentPrice,
           `하드 손절 ${pnlPercent.toFixed(1)}% (갭 하락 보호 ${HARD_STOP}%)`,
@@ -474,7 +484,7 @@ const _executeScalpingCycleInner = async (
         if (!meta.firstPartialSold && pnlPercent >= tp * 0.8 && holding.quantity >= 2) {
           const partialQty = Math.floor(holding.quantity * 0.3)
           if (partialQty > 0) {
-            console.log(`[스캘핑] ${holding.name} 1차 분할익절 — ${pnlPercent.toFixed(1)}% (목표 ${tp.toFixed(1)}%의 60%) → ${partialQty}/${holding.quantity}주 매도`)
+            console.log(`[스캘핑 ${logTime()}] ${holding.name} 1차 분할익절 — ${pnlPercent.toFixed(1)}% (목표 ${tp.toFixed(1)}%의 60%) → ${partialQty}/${holding.quantity}주 매도`)
             const log = await executeSell(
               holding.code, holding.name, partialQty, holding.currentPrice,
               `🎯½ 1차 분할익절 ${pnlPercent.toFixed(1)}% (${partialQty}/${holding.quantity}주, 나머지 트레일링)`,
@@ -494,7 +504,7 @@ const _executeScalpingCycleInner = async (
 
       // ★ 하드스탑 -3%: 어떤 상황이든 -3% 넘으면 무조건 즉시 매도
       if (pnlPercent <= -3) {
-        console.log(`[스캘핑] ${holding.name} 하드스탑 발동! ${pnlPercent.toFixed(1)}% (한도 -3%)`)
+        console.log(`[스캘핑 ${logTime()}] ${holding.name} 하드스탑 발동! ${pnlPercent.toFixed(1)}% (한도 -3%)`)
         const log = await executeSell(
           holding.code, holding.name, holding.quantity, holding.currentPrice,
           `🚨 하드스탑 ${pnlPercent.toFixed(1)}% — 최대 손실 -3% 초과`,
@@ -573,7 +583,7 @@ const _executeScalpingCycleInner = async (
   let effectiveMaxPositions = afterMarket ? Math.min(config.maxPositions, 3) : config.maxPositions
 
   if (afterMarket) {
-    console.log(`[스캘핑] 에프터마켓 — 최소점수 ${effectiveMinScore}점, 최대 ${effectiveMaxPositions}종목`)
+    console.log(`[스캘핑 ${logTime()}] 에프터마켓 — 최소점수 ${effectiveMinScore}점, 최대 ${effectiveMaxPositions}종목`)
   }
 
   // ─── 공격 모드 보정 ───
@@ -582,25 +592,25 @@ const _executeScalpingCycleInner = async (
     effectiveMinScore = Math.max(10, effectiveMinScore - 10)
     effectiveMaxPerTrade = Math.round(effectiveMaxPerTrade * 1.5)
     effectiveMaxPositions += 3
-    console.log(`[스캘핑] 공격 모드 ON — 최소점수 ${effectiveMinScore}, 건당 ${effectiveMaxPerTrade.toLocaleString()}원, 최대 ${effectiveMaxPositions}종목`)
+    console.log(`[스캘핑 ${logTime()}] 공격 모드 ON — 최소점수 ${effectiveMinScore}, 건당 ${effectiveMaxPerTrade.toLocaleString()}원, 최대 ${effectiveMaxPositions}종목`)
   }
 
   // ─── 손실 레벨별 매수 제한 ───
   let maxNewBuysThisCycle = Infinity
   let allowAddBuy = true
   if (currentLossLevel === 'full-stop') {
-    console.log(`[스캘핑] 완전 중단 모드 — 신규 매수 차단 (보유종목 매도/관리는 계속)`)
+    console.log(`[스캘핑 ${logTime()}] 완전 중단 모드 — 신규 매수 차단 (보유종목 매도/관리는 계속)`)
   } else if (currentLossLevel === 'recovery') {
     effectiveMinScore += 20
     effectiveMaxPerTrade = Math.round(effectiveMaxPerTrade * 0.5)
     maxNewBuysThisCycle = 1
     allowAddBuy = false
-    console.log(`[스캘핑] 복구 모드 매수 제한 — 최소점수 ${effectiveMinScore}, 건당 ${effectiveMaxPerTrade.toLocaleString()}원, 최대 1건, 추가매수 X`)
+    console.log(`[스캘핑 ${logTime()}] 복구 모드 매수 제한 — 최소점수 ${effectiveMinScore}, 건당 ${effectiveMaxPerTrade.toLocaleString()}원, 최대 1건, 추가매수 X`)
   } else if (currentLossLevel === 'conservative') {
     effectiveMinScore += 10
     effectiveMaxPerTrade = Math.round(effectiveMaxPerTrade * 0.7)
     effectiveMaxPositions = Math.min(effectiveMaxPositions, 3)
-    console.log(`[스캘핑] 보수적 모드 매수 제한 — 최소점수 ${effectiveMinScore}, 건당 ${effectiveMaxPerTrade.toLocaleString()}원, 최대 ${effectiveMaxPositions}종목`)
+    console.log(`[스캘핑 ${logTime()}] 보수적 모드 매수 제한 — 최소점수 ${effectiveMinScore}, 건당 ${effectiveMaxPerTrade.toLocaleString()}원, 최대 ${effectiveMaxPositions}종목`)
   }
 
   // ★ 마감 30분: 보유 포지션 수익 중이면 익절 우선
@@ -608,7 +618,7 @@ const _executeScalpingCycleInner = async (
     for (const holding of balance.holdings) {
       if (holding.quantity <= 0 || dailyOrderCount >= config.maxDailyOrders) continue
       if (holding.profitLossPercent > 0.3) {
-        console.log(`[스캘핑] 장마감임박 — ${holding.name} 수익 ${holding.profitLossPercent.toFixed(1)}% → 마감 익절`)
+        console.log(`[스캘핑 ${logTime()}] 장마감임박 — ${holding.name} 수익 ${holding.profitLossPercent.toFixed(1)}% → 마감 익절`)
         const log = await executeSell(
           holding.code, holding.name, holding.quantity, holding.currentPrice,
           `⏰ 장마감 익절 ${holding.profitLossPercent.toFixed(1)}%`, config
@@ -643,7 +653,7 @@ const _executeScalpingCycleInner = async (
     if (currentLossLevel === 'recovery') {
       buySignals = buySignals.filter(s => {
         const hasSupply = (s.foreignNetBuy ?? 0) > 0 || (s.institutionNetBuy ?? 0) > 0
-        if (!hasSupply) console.log(`[스캘핑] 복구 모드 — ${s.name}(${s.score}점) 수급 미달로 제외`)
+        if (!hasSupply) console.log(`[스캘핑 ${logTime()}] 복구 모드 — ${s.name}(${s.score}점) 수급 미달로 제외`)
         return hasSupply
       })
     }
@@ -661,17 +671,17 @@ const _executeScalpingCycleInner = async (
         const canAddMore = totalInvested < maxPerStock
 
         if (!canAddMore) {
-          console.log(`[스캘핑] ${s.name}(${s.score}점) 추가매수 불가 — 이미 ${totalInvested.toLocaleString()}원 투자 (한도 ${maxPerStock.toLocaleString()}원)`)
+          console.log(`[스캘핑 ${logTime()}] ${s.name}(${s.score}점) 추가매수 불가 — 이미 ${totalInvested.toLocaleString()}원 투자 (한도 ${maxPerStock.toLocaleString()}원)`)
         } else if (s.score >= 40 && alreadyHeld.profitLossPercent > 0) {
           // 불타기: 강한 신호 + 수익 중 → 추세 추종
-          console.log(`[스캘핑] ${s.name}(${s.score}점) 🔥 불타기 대상 — 수익 ${alreadyHeld.profitLossPercent.toFixed(1)}% + 강매수 신호`)
+          console.log(`[스캘핑 ${logTime()}] ${s.name}(${s.score}점) 🔥 불타기 대상 — 수익 ${alreadyHeld.profitLossPercent.toFixed(1)}% + 강매수 신호`)
           addBuyTargets.push({ scan: s, holding: alreadyHeld })
         } else if (s.score >= 35 && alreadyHeld.profitLossPercent < -1 && alreadyHeld.profitLossPercent > -3) {
           // 물타기: 소폭 하락(-1%~-3%) + 강한 매수 신호 → 평단가 낮추기
-          console.log(`[스캘핑] ${s.name}(${s.score}점) 💧 물타기 대상 — 하락 ${alreadyHeld.profitLossPercent.toFixed(1)}% + 매수 신호 유지`)
+          console.log(`[스캘핑 ${logTime()}] ${s.name}(${s.score}점) 💧 물타기 대상 — 하락 ${alreadyHeld.profitLossPercent.toFixed(1)}% + 매수 신호 유지`)
           addBuyTargets.push({ scan: s, holding: alreadyHeld })
         } else {
-          console.log(`[스캘핑] ${s.name}(${s.score}점) 보유 중(${alreadyHeld.quantity}주, ${alreadyHeld.profitLossPercent.toFixed(1)}%) — 추가매수 조건 미달`)
+          console.log(`[스캘핑 ${logTime()}] ${s.name}(${s.score}점) 보유 중(${alreadyHeld.quantity}주, ${alreadyHeld.profitLossPercent.toFixed(1)}%) — 추가매수 조건 미달`)
         }
       } else {
         newBuyTargets.push(s)
@@ -679,28 +689,28 @@ const _executeScalpingCycleInner = async (
     }
 
     if (positionSlots <= 0 && newBuyTargets.length > 0) {
-      console.log(`[스캘핑] 포지션 슬롯 없음 (${currentPositionCount}/${effectiveMaxPositions} 보유 중) — 신규 매수 불가`)
+      console.log(`[스캘핑 ${logTime()}] 포지션 슬롯 없음 (${currentPositionCount}/${effectiveMaxPositions} 보유 중) — 신규 매수 불가`)
     }
     if (freshCash < effectiveMaxPerTrade * 0.3) {
-      console.log(`[스캘핑] 현금 부족 (${freshCash.toLocaleString()}원 < 최소 ${Math.round(effectiveMaxPerTrade * 0.3).toLocaleString()}원)`)
+      console.log(`[스캘핑 ${logTime()}] 현금 부족 (${freshCash.toLocaleString()}원 < 최소 ${Math.round(effectiveMaxPerTrade * 0.3).toLocaleString()}원)`)
     }
 
     // 신규 종목 매수
     for (const target of newBuyTargets) {
       if (dailyOrderCount >= config.maxDailyOrders) {
-        console.log(`[스캘핑] 일일 주문 한도 도달 (${dailyOrderCount}/${config.maxDailyOrders})`)
+        console.log(`[스캘핑 ${logTime()}] 일일 주문 한도 도달 (${dailyOrderCount}/${config.maxDailyOrders})`)
         break
       }
       if (positionSlots <= 0) break
       if (freshCash < effectiveMaxPerTrade * 0.3) break
       if (newBuyCount >= maxNewBuysThisCycle) {
-        console.log(`[스캘핑] ${LOSS_LABELS[currentLossLevel]} — 이번 사이클 매수 한도 도달 (${newBuyCount}건)`)
+        console.log(`[스캘핑 ${logTime()}] ${LOSS_LABELS[currentLossLevel]} — 이번 사이클 매수 한도 도달 (${newBuyCount}건)`)
         break
       }
 
       // ETF/레버리지/인버스 매수 차단
       if (isETF(target.name)) {
-        console.log(`[스캘핑] ${target.name} — ETF/레버리지/인버스 매수 차단`)
+        console.log(`[스캘핑 ${logTime()}] ${target.name} — ETF/레버리지/인버스 매수 차단`)
         continue
       }
 
@@ -712,7 +722,7 @@ const _executeScalpingCycleInner = async (
         ).length
         const sectorLimit = isAggressive ? MAX_PER_SECTOR + 1 : MAX_PER_SECTOR
       if (sectorCount >= sectorLimit) {
-          console.log(`[스캘핑] ${target.name} — ${targetSector} 섹터 이미 ${sectorCount}종목 보유 (한도 ${MAX_PER_SECTOR})`)
+          console.log(`[스캘핑 ${logTime()}] ${target.name} — ${targetSector} 섹터 이미 ${sectorCount}종목 보유 (한도 ${MAX_PER_SECTOR})`)
           continue
         }
       }
@@ -726,7 +736,7 @@ const _executeScalpingCycleInner = async (
       const investAmount = Math.min(atrAdjustedMax, freshCash * 0.5)
       const quantity = Math.floor(investAmount / target.price)
       if (quantity <= 0) {
-        console.log(`[스캘핑] ${target.name} 수량 0 — 가격 ${target.price.toLocaleString()}원 > 투자금 ${investAmount.toLocaleString()}원 (ATR ${target.atrPercent.toFixed(1)}%)`)
+        console.log(`[스캘핑 ${logTime()}] ${target.name} 수량 0 — 가격 ${target.price.toLocaleString()}원 > 투자금 ${investAmount.toLocaleString()}원 (ATR ${target.atrPercent.toFixed(1)}%)`)
         continue
       }
 
@@ -760,7 +770,7 @@ const _executeScalpingCycleInner = async (
 
     // ─── 4B. 추가 매수 (불타기/물타기) — 복구/완전중단 모드에서는 차단 ───
     if (!allowAddBuy && addBuyTargets.length > 0) {
-      console.log(`[스캘핑] ${LOSS_LABELS[currentLossLevel]} — 추가매수(불타기/물타기) 차단`)
+      console.log(`[스캘핑 ${logTime()}] ${LOSS_LABELS[currentLossLevel]} — 추가매수(불타기/물타기) 차단`)
     }
     for (const { scan: target, holding } of (allowAddBuy ? addBuyTargets : [])) {
       if (dailyOrderCount >= config.maxDailyOrders) break
@@ -867,7 +877,7 @@ const executeBuy = async (
         if (nxtQty <= 0) {
           throw new Error(`NXT 현재가 ${nxtPrice}원 > 투자금 ${nxtInvest}원`)
         }
-        console.log(`[스캘핑] ${name} KRX 시간외 불가 → NXT 지정가(현재가 ${nxtPrice}원, ${nxtQty}주)로 재시도`)
+        console.log(`[스캘핑 ${logTime()}] ${name} KRX 시간외 불가 → NXT 지정가(현재가 ${nxtPrice}원, ${nxtQty}주)로 재시도`)
 
         const nxtResult = await placeKisOrder({
           side: 'buy', code, quantity: nxtQty,
@@ -891,7 +901,7 @@ const executeBuy = async (
         return log
       } catch (nxtErr) {
         const nxtMsg = nxtErr instanceof Error ? nxtErr.message : 'NXT 주문 오류'
-        console.log(`[스캘핑] ${name} NXT도 실패: ${nxtMsg}`)
+        console.log(`[스캘핑 ${logTime()}] ${name} NXT도 실패: ${nxtMsg}`)
         const log: TradeLogEntry = {
           id: `${Date.now()}-${code}-buy-nxt-fail`,
           timestamp: new Date().toISOString(),
@@ -957,7 +967,7 @@ const executeSell = async (
     if (isNxtRetryable(msg) && isNxtAfterMarket() && config.mode === 'real') {
       try {
         const nxtPrice = await getKisCurrentPrice(code, config.mode)
-        console.log(`[스캘핑] ${name} 매도 KRX 불가 → NXT 지정가(현재가 ${nxtPrice}원)로 재시도`)
+        console.log(`[스캘핑 ${logTime()}] ${name} 매도 KRX 불가 → NXT 지정가(현재가 ${nxtPrice}원)로 재시도`)
         const nxtResult = await placeKisOrder({
           side: 'sell', code, quantity,
           price: nxtPrice,

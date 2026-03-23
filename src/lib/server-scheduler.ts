@@ -1,4 +1,8 @@
 // 서버 사이드 스캘핑 스케줄러 — 브라우저 없이 자동 실행 + 로그 파일 저장
+const logTime = () => {
+  const d = new Date()
+  return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import {
@@ -18,14 +22,14 @@ const loadAndRestore = () => {
     if (existsSync(LOG_FILE)) {
       const logs: TradeLogEntry[] = JSON.parse(readFileSync(LOG_FILE, 'utf-8'))
       restoreLogs(logs)
-      console.log(`[스캘핑] 로그 ${logs.length}건 복원됨`)
+      console.log(`[스캘핑 ${logTime()}] 로그 ${logs.length}건 복원됨`)
     }
   } catch { /* ignore */ }
   try {
     if (existsSync(STATS_FILE)) {
       const stats = JSON.parse(readFileSync(STATS_FILE, 'utf-8'))
       restoreStats(stats)
-      console.log(`[스캘핑] 통계 복원됨 (주문 ${stats.orders}건, 손익 ${stats.pnl}원)`)
+      console.log(`[스캘핑 ${logTime()}] 통계 복원됨 (주문 ${stats.orders}건, 손익 ${stats.pnl}원)`)
     }
   } catch { /* ignore */ }
 }
@@ -89,7 +93,7 @@ const runCycle = async () => {
   }
 
   try {
-    console.log(`[스캘핑] 사이클 #${state.cycleCount + 1} 실행 중... (${state.config.mode} 모드)`)
+    console.log(`[스캘핑 ${logTime()}] 사이클 #${state.cycleCount + 1} 실행 중... (${state.config.mode} 모드)`)
     const result = await executeScalpingCycle(state.config)
     state.lastCycleAt = new Date().toISOString()
     state.cycleCount++
@@ -98,7 +102,7 @@ const runCycle = async () => {
     const buySignals = result.scan.filter(s => s.signal === 'BUY').length
     const failCount = result.logs.filter(l => l.result === 'failed').length
 
-    console.log(`[스캘핑] 완료 — 스캔 ${result.scan.length}종목 (매수신호 ${buySignals}, 최소점수 ${state.config.minScore}) / 매수 ${buyCount}건, 매도 ${sellCount}건${failCount > 0 ? `, 실패 ${failCount}건` : ''}`)
+    console.log(`[스캘핑 ${logTime()}] 완료 — 스캔 ${result.scan.length}종목 (매수신호 ${buySignals}, 최소점수 ${state.config.minScore}) / 매수 ${buyCount}건, 매도 ${sellCount}건${failCount > 0 ? `, 실패 ${failCount}건` : ''}`)
 
     // 보유종목 캐시 업데이트
     try {
@@ -111,10 +115,10 @@ const runCycle = async () => {
 
     if (buySignals > 0 && buyCount === 0 && sellCount === 0) {
       const topBuy = result.scan.filter(s => s.signal === 'BUY')[0]
-      console.log(`[스캘핑] 매수 미실행 — 상위 종목: ${topBuy?.name}(${topBuy?.score}점) / 최소점수: ${state.config.minScore}`)
+      console.log(`[스캘핑 ${logTime()}] 매수 미실행 — 상위 종목: ${topBuy?.name}(${topBuy?.score}점) / 최소점수: ${state.config.minScore}`)
       if (failCount > 0) {
         const failedLogs = result.logs.filter(l => l.result === 'failed')
-        failedLogs.forEach(l => console.log(`[스캘핑] 실패: ${l.name} ${l.action} — ${l.message}`))
+        failedLogs.forEach(l => console.log(`[스캘핑 ${logTime()}] 실패: ${l.name} ${l.action} — ${l.message}`))
       }
     }
 
@@ -146,7 +150,7 @@ export const startScheduler = (config?: Partial<ScalpingConfig>) => {
   state.lastCycleAt = null
   state.cycleCount = 0
 
-  console.log(`[스캘핑] 스케줄러 시작 (${state.config.mode} 모드, ${INTERVAL_MS / 1000}초 간격)`)
+  console.log(`[스캘핑 ${logTime()}] 스케줄러 시작 (${state.config.mode} 모드, ${INTERVAL_MS / 1000}초 간격)`)
 
   runCycle()
   state.intervalId = setInterval(runCycle, INTERVAL_MS)
