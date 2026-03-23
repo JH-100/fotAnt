@@ -320,6 +320,8 @@ export const getKisBalance = async (mode?: TradingMode): Promise<KisBalance> => 
 
   const summary = data.output2?.[0] ?? {}
   const cashBalance = parseInt(summary.dnca_tot_amt ?? '0', 10)
+  // 주문가능금액: 미수 없는 매수가능금액 (미체결 주문 반영된 실제 가용 금액)
+  const orderableCash = parseInt(summary.nrcvb_buy_amt ?? summary.dnca_tot_amt ?? '0', 10)
   const totalEval = parseInt(summary.tot_evlu_amt ?? '0', 10)
   const purchaseTotal = parseInt(summary.pchs_amt_smtl_amt ?? '0', 10)
   const evalTotal = parseInt(summary.evlu_amt_smtl_amt ?? '0', 10)
@@ -331,6 +333,7 @@ export const getKisBalance = async (mode?: TradingMode): Promise<KisBalance> => 
   return {
     holdings,
     cashBalance,
+    orderableCash, // 실제 주문가능금액 (한투 앱과 동일)
     totalEvaluation: totalEval || (cashBalance + evalTotal),
     totalProfitLoss,
     totalProfitLossPercent: Math.round(totalProfitLossPercent * 100) / 100,

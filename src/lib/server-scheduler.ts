@@ -70,6 +70,7 @@ const state: SchedulerState = {
     maxDailyOrders: 20,
     minScore: 25,
     mode: 'mock',
+    riskLevel: 'normal',
   },
   intervalId: null,
   lastError: null,

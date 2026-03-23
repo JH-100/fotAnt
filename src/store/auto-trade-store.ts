@@ -26,9 +26,11 @@ interface AutoTradeState {
   scanResults: ScanItem[]
   lastExecuted: string | null
   dailyStats: { orders: number; pnl: number; lossLevel?: string }
+  selectedChartCode: string | null
 
   setRunning: (running: boolean) => void
   setConfig: (config: Partial<ScalpingConfig>) => void
+  setSelectedChartCode: (code: string | null) => void
   addLogs: (logs: TradeLogEntry[]) => void
   setScanResults: (results: ScanItem[]) => void
   setLastExecuted: (time: string) => void
@@ -52,8 +54,10 @@ const useAutoTradeStore = create<AutoTradeState>()(
       scanResults: [],
       lastExecuted: null,
       dailyStats: { orders: 0, pnl: 0 },
+      selectedChartCode: null,
 
       setRunning: (running) => set({ isRunning: running }),
+      setSelectedChartCode: (code) => set({ selectedChartCode: code }),
       setConfig: (partial) =>
         set((state) => ({ config: { ...state.config, ...partial } })),
       addLogs: (newLogs) =>

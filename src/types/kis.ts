@@ -24,6 +24,7 @@ export interface KisHolding {
 export interface KisBalance {
   holdings: KisHolding[]
   cashBalance: number
+  orderableCash: number  // 주문가능금액 (미체결 주문 반영)
   totalEvaluation: number
   totalProfitLoss: number
   totalProfitLossPercent: number

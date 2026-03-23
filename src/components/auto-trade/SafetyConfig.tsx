@@ -142,6 +142,58 @@ const ScalpingConfigPanel = () => {
         />
       </div>
 
+      {/* 공격 모드 토글 */}
+      <div className="mt-4 rounded-xl border border-white/10 p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs font-medium">공격 모드</p>
+            <p className="text-[10px] text-muted-foreground">높은 수익 · 높은 리스크</p>
+          </div>
+          <button
+            type="button"
+            disabled={isRunning}
+            onClick={() => setConfig({
+              riskLevel: config.riskLevel === 'aggressive' ? 'normal' : 'aggressive'
+            })}
+            className={`relative h-7 w-14 rounded-full transition-all ${
+              config.riskLevel === 'aggressive'
+                ? 'bg-gradient-to-r from-orange-500 to-rose-500 shadow-lg shadow-rose-500/20'
+                : 'bg-white/10'
+            } disabled:opacity-40`}
+          >
+            <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-all ${
+              config.riskLevel === 'aggressive' ? 'left-[30px]' : 'left-0.5'
+            }`} />
+          </button>
+        </div>
+
+        {config.riskLevel === 'aggressive' && (
+          <div className="mt-3 space-y-2">
+            <div className="grid grid-cols-2 gap-2 text-[10px]">
+              <div className="rounded-lg bg-orange-500/10 px-2 py-1.5">
+                <span className="text-orange-300">건당 금액</span>
+                <span className="float-right font-mono text-orange-400">{Math.round(config.maxPerTrade * 1.5).toLocaleString()}</span>
+              </div>
+              <div className="rounded-lg bg-orange-500/10 px-2 py-1.5">
+                <span className="text-orange-300">최소 점수</span>
+                <span className="float-right font-mono text-orange-400">{Math.max(10, config.minScore - 10)}점</span>
+              </div>
+              <div className="rounded-lg bg-orange-500/10 px-2 py-1.5">
+                <span className="text-orange-300">최대 종목</span>
+                <span className="float-right font-mono text-orange-400">{config.maxPositions + 3}종목</span>
+              </div>
+              <div className="rounded-lg bg-orange-500/10 px-2 py-1.5">
+                <span className="text-orange-300">익절/손절</span>
+                <span className="float-right font-mono text-orange-400">x1.5</span>
+              </div>
+            </div>
+            <p className="text-center text-[10px] text-rose-400">
+              예상 일 변동폭: ±{Math.round(config.maxPerTrade * 1.5 * (config.maxPositions + 3) * 0.03 / 10000)}만원
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* 봇 자율 판단 설명 */}
       <div className="mt-4 space-y-2">
         <div className="rounded-xl bg-emerald-500/10 p-3">

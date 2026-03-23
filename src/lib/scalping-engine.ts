@@ -11,6 +11,8 @@ const ETF_PREFIXES = ['KODEX', 'TIGER', 'KOSEF', 'KBSTAR', 'ARIRANG', 'SOL', 'AC
 const isETF = (name: string): boolean =>
   ETF_PREFIXES.some(p => name.startsWith(p)) || name.includes('레버리지') || name.includes('인버스')
 
+export type RiskLevel = 'normal' | 'aggressive'
+
 export interface ScalpingConfig {
   budget: number              // 총 투자 한도 (원)
   maxPerTrade: number         // 건당 최대 금액 (원)
@@ -18,6 +20,7 @@ export interface ScalpingConfig {
   maxDailyOrders: number      // 일일 최대 주문
   minScore: number            // 최소 매수 점수 (기본 25)
   mode: TradingMode           // 실전/모의
+  riskLevel: RiskLevel        // 위험도 (normal/aggressive)
 }
 
 export const DEFAULT_SCALPING: ScalpingConfig = {
@@ -27,6 +30,7 @@ export const DEFAULT_SCALPING: ScalpingConfig = {
   maxDailyOrders: 20,
   minScore: 25,
   mode: 'mock',
+  riskLevel: 'normal',
 }
 
 // ─── 포지션별 익절/손절 기준 (매수 시 스캔결과에서 저장) ──
@@ -547,6 +551,15 @@ const _executeScalpingCycleInner = async (
     console.log(`[스캘핑] 시간대 보정: ${timeAdj.label} → 최소점수 ${effectiveMinScore}점`)
   }
 
+  // ─── 공격 모드 보정 ───
+  const isAggressive = config.riskLevel === 'aggressive'
+  if (isAggressive) {
+    effectiveMinScore = Math.max(10, effectiveMinScore - 10)
+    effectiveMaxPerTrade = Math.round(effectiveMaxPerTrade * 1.5)
+    effectiveMaxPositions += 3
+    console.log(`[스캘핑] 공격 모드 ON — 최소점수 ${effectiveMinScore}, 건당 ${effectiveMaxPerTrade.toLocaleString()}원, 최대 ${effectiveMaxPositions}종목`)
+  }
+
   // ─── 손실 레벨별 매수 제한 ───
   let maxNewBuysThisCycle = Infinity
   let allowAddBuy = true
@@ -672,7 +685,8 @@ const _executeScalpingCycleInner = async (
         const sectorCount = freshBalance.holdings.filter(h =>
           h.quantity > 0 && SECTOR_MAP[h.code] === targetSector
         ).length
-        if (sectorCount >= MAX_PER_SECTOR) {
+        const sectorLimit = isAggressive ? MAX_PER_SECTOR + 1 : MAX_PER_SECTOR
+      if (sectorCount >= sectorLimit) {
           console.log(`[스캘핑] ${target.name} — ${targetSector} 섹터 이미 ${sectorCount}종목 보유 (한도 ${MAX_PER_SECTOR})`)
           continue
         }
@@ -702,9 +716,12 @@ const _executeScalpingCycleInner = async (
           positionSlots--
           newBuyCount++
           freshCash -= quantity * target.price
+          // 공격 모드: 익절/손절 1.5배 확대
+          const tpMult = isAggressive ? 1.5 : 1
+          const slMult = isAggressive ? 1.5 : 1
           positionMetas[target.code] = {
-            takeProfitPercent: target.takeProfitPercent,
-            stopLossPercent: target.stopLossPercent,
+            takeProfitPercent: Math.round(target.takeProfitPercent * tpMult * 10) / 10,
+            stopLossPercent: Math.round(target.stopLossPercent * slMult * 10) / 10,
             buyScore: target.score,
             buyReasons: target.reasons,
             highWaterMark: target.price,

@@ -69,7 +69,55 @@ export async function POST(request: Request) {
   }
 }
 
-/** GET: 스케줄러 상태 + 로그 + 스캔 결과 */
-export async function GET() {
+/** GET: 스케줄러 상태 + 로그 + 스캔 결과 / 차트 데이터 */
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url)
+  const action = searchParams.get('action')
+
+  // 차트 데이터 요청
+  if (action === 'chart') {
+    const code = searchParams.get('code')
+    if (!code) return NextResponse.json({ error: 'code 파라미터 필요' }, { status: 400 })
+
+    try {
+      const { getKisMinutePrices, aggregateMinuteBars } = await import('@/lib/kis-api')
+      const { calcBollingerBands, calcVWAP } = await import('@/lib/indicators')
+
+      const mode = getSchedulerStatus().config.mode
+      const rawBars = await getKisMinutePrices(code, mode)
+      if (rawBars.length < 10) {
+        return NextResponse.json({ code, name: code, candles: [] })
+      }
+
+      const sorted = [...rawBars].sort((a, b) => a.time.localeCompare(b.time))
+      const bars5 = aggregateMinuteBars(rawBars, 5).sort((a, b) => a.time.localeCompare(b.time))
+      const closes5 = bars5.map(b => b.close)
+
+      // 볼린저밴드
+      const bb = calcBollingerBands(closes5, 10, 1.5)
+      // VWAP
+      const vwap = calcVWAP(sorted)
+
+      const candles = bars5.map((b, i) => ({
+        time: b.time,
+        open: b.open,
+        high: b.high,
+        low: b.low,
+        close: b.close,
+        volume: b.cumVolume ?? 0,
+        bbUpper: bb.upper[i] ?? null,
+        bbLower: bb.lower[i] ?? null,
+        vwap: vwap > 0 ? vwap : null,
+      }))
+
+      return NextResponse.json({ code, name: code, candles })
+    } catch (err) {
+      return NextResponse.json({
+        code, name: code, candles: [],
+        error: err instanceof Error ? err.message : 'chart fetch failed'
+      })
+    }
+  }
+
   return NextResponse.json(getSchedulerStatus())
 }

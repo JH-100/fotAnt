@@ -4,7 +4,7 @@
 import useAutoTradeStore from '@/store/auto-trade-store'
 
 const ScanResults = () => {
-  const { scanResults } = useAutoTradeStore()
+  const { scanResults, selectedChartCode, setSelectedChartCode } = useAutoTradeStore()
 
   return (
     <div className="glass rounded-2xl">
@@ -24,7 +24,13 @@ const ScanResults = () => {
         ) : (
           <div className="divide-y divide-white/[0.03]">
             {scanResults.map((item) => (
-              <div key={item.code} className="px-4 py-3">
+              <div
+                key={item.code}
+                className={`cursor-pointer px-4 py-3 transition-colors hover:bg-white/[0.03] ${
+                  selectedChartCode === item.code ? 'bg-blue-500/10 ring-1 ring-blue-500/20' : ''
+                }`}
+                onClick={() => setSelectedChartCode(selectedChartCode === item.code ? null : item.code)}
+              >
                 <div className="flex items-start gap-3">
                   {/* 신호 뱃지 */}
                   <div className="mt-0.5 shrink-0">

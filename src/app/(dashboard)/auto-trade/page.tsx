@@ -6,6 +6,8 @@ import SafetyConfig from '@/components/auto-trade/SafetyConfig'
 import Holdings from '@/components/auto-trade/Holdings'
 import ScanResults from '@/components/auto-trade/ScanResults'
 import TradeLog from '@/components/auto-trade/TradeLog'
+import RiskGauge from '@/components/auto-trade/RiskGauge'
+import MiniChart from '@/components/auto-trade/MiniChart'
 
 const AutoTradePage = () => {
   return (
@@ -29,8 +31,14 @@ const AutoTradePage = () => {
         </div>
       </div>
 
+      {/* 리스크 게이지 */}
+      <RiskGauge />
+
       {/* 보유종목 */}
       <Holdings />
+
+      {/* 캔들차트 */}
+      <MiniChart />
 
       {/* 스캔 결과 + 매매 로그 */}
       <div className="grid gap-6 lg:grid-cols-2">
