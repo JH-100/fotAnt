@@ -286,14 +286,13 @@ const analyzeWithMinuteBars = async (
     score -= 10; reasons.push(`외국인+기관 동반매도`)
   }
 
-  // 익절/손절 — 핵심: 익절 > 손절 (최소 1.5배) + 손절 하드캡 1.5%
+  // 익절/손절 — 손절 타이트 + 익절 넓게 (최소 2배)
   let stopLossPercent = Math.max(0.8, Math.min(1.5, atrPercent * 1.5))  // 손절: 0.8~1.5% (칼손절)
-  let takeProfitPercent = Math.max(stopLossPercent * 1.5, Math.min(5, atrPercent * 3))  // 익절: 손절의 최소 1.5배
+  let takeProfitPercent = Math.max(stopLossPercent * 2, Math.min(6, atrPercent * 3))  // 익절: 손절의 최소 2배
   takeProfitPercent = Math.max(takeProfitPercent, spreadCost * 3, 2.0)  // 최소 2%
   if (score >= 50) { takeProfitPercent *= 1.3 }
-  else if (score < 30) { stopLossPercent *= 0.9 }
   if (volumeSurge > 3) { takeProfitPercent *= 1.2 }
-  takeProfitPercent = Math.max(takeProfitPercent, stopLossPercent * 1.5)  // 최종 보장
+  takeProfitPercent = Math.max(takeProfitPercent, stopLossPercent * 2)  // 최종 보장: 손절의 2배
   takeProfitPercent = Math.round(takeProfitPercent * 10) / 10
   stopLossPercent = Math.round(stopLossPercent * 10) / 10
 
@@ -400,13 +399,13 @@ const analyzeWithDailyBars = async (
   // 급락 반등
   if (change < -3 && rsi < 40) { score += 15; reasons.push(`${change.toFixed(1)}% 급락 반등 기대`) }
 
-  // 익절/손절 (일봉 기반) — 핵심: 익절 > 손절
-  let stopLossPercent = Math.max(1, Math.min(2, atrPercent * 1))  // 손절: 1~2%
-  let takeProfitPercent = Math.max(stopLossPercent * 1.5, Math.min(6, atrPercent * 2))  // 익절: 손절의 최소 1.5배
+  // 익절/손절 (일봉 기반) — 손절 타이트 + 익절 넓게 (최소 2배)
+  let stopLossPercent = Math.max(1, Math.min(1.5, atrPercent * 1))  // 손절: 1~1.5%
+  let takeProfitPercent = Math.max(stopLossPercent * 2, Math.min(6, atrPercent * 2))  // 익절: 손절의 최소 2배
   takeProfitPercent = Math.max(takeProfitPercent, 2.5)  // 최소 2.5%
   if (score >= 50) { takeProfitPercent *= 1.3 }
   if (volumeSurge > 2) { takeProfitPercent *= 1.2 }
-  takeProfitPercent = Math.max(takeProfitPercent, stopLossPercent * 1.5)
+  takeProfitPercent = Math.max(takeProfitPercent, stopLossPercent * 2)
   takeProfitPercent = Math.round(takeProfitPercent * 10) / 10
   stopLossPercent = Math.round(stopLossPercent * 10) / 10
 

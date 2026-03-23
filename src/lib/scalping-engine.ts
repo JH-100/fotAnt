@@ -492,8 +492,24 @@ const _executeScalpingCycleInner = async (
         }
       }
 
+      // ★ 하드스탑 -3%: 어떤 상황이든 -3% 넘으면 무조건 즉시 매도
+      if (pnlPercent <= -3) {
+        console.log(`[스캘핑] ${holding.name} 하드스탑 발동! ${pnlPercent.toFixed(1)}% (한도 -3%)`)
+        const log = await executeSell(
+          holding.code, holding.name, holding.quantity, holding.currentPrice,
+          `🚨 하드스탑 ${pnlPercent.toFixed(1)}% — 최대 손실 -3% 초과`,
+          config
+        )
+        if (log) {
+          newLogs.push(log)
+          if (log.result === 'success') {
+            dailyPnL += holding.profitLoss
+            delete positionMetas[holding.code]
+          }
+        }
+      }
       // 전량 익절 (분할익절 이후 잔량 또는 1주만 보유 시)
-      if (pnlPercent >= tp) {
+      else if (pnlPercent >= tp) {
         const log = await executeSell(
           holding.code, holding.name, holding.quantity, holding.currentPrice,
           `🎯 ${meta?.firstPartialSold ? '2차 ' : ''}익절 ${pnlPercent.toFixed(1)}% (목표 ${tp.toFixed(1)}%, ATR 기반)`,
@@ -507,7 +523,7 @@ const _executeScalpingCycleInner = async (
           }
         }
       }
-      // 손절
+      // 손절 (ATR 기반, 하드스탑 전)
       else if (pnlPercent <= -sl) {
         const log = await executeSell(
           holding.code, holding.name, holding.quantity, holding.currentPrice,
@@ -550,20 +566,14 @@ const _executeScalpingCycleInner = async (
   // 4. 매수 실행 (잔고 조회 필요)
   const freshBalance = balance ?? await getBalanceSafe(config.mode)
 
-  // ─── 시간대별 보정 ───
+  // ─── 최소점수 고정 (시간대 보정 없음) ───
   const afterMarket = isAfterMarketTime()
-  const timeAdj = getTimeAdjustment()
-  let effectiveMinScore = afterMarket ? Math.max(config.minScore + 10, 35) : config.minScore
-  // 장개시 10분 / 점심시간 → 최소점수 추가 상향 (변동성 필터)
-  effectiveMinScore += timeAdj.scoreBonus
-  let effectiveMaxPerTrade = config.maxPerTrade  // 사용자 설정 존중
+  let effectiveMinScore = config.minScore  // 항상 25점 고정
+  let effectiveMaxPerTrade = config.maxPerTrade
   let effectiveMaxPositions = afterMarket ? Math.min(config.maxPositions, 3) : config.maxPositions
 
   if (afterMarket) {
-    console.log(`[스캘핑] 에프터마켓 보정 — 최소점수 ${effectiveMinScore}점, 최대 ${effectiveMaxPositions}종목 (건당 ${effectiveMaxPerTrade.toLocaleString()}원 유지)`)
-  }
-  if (timeAdj.scoreBonus > 0) {
-    console.log(`[스캘핑] 시간대 보정: ${timeAdj.label} → 최소점수 ${effectiveMinScore}점`)
+    console.log(`[스캘핑] 에프터마켓 — 최소점수 ${effectiveMinScore}점, 최대 ${effectiveMaxPositions}종목`)
   }
 
   // ─── 공격 모드 보정 ───
