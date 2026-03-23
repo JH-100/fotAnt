@@ -835,11 +835,15 @@ const executeBuy = async (
     try {
       const realPrice = await getKisCurrentPrice(code, config.mode)
       if (realPrice > 0) {
+        const origInvest = quantity * price
         orderPrice = realPrice
-        orderQty = Math.floor((quantity * price) / realPrice) // 투자금 기준 수량 재계산
+        orderQty = Math.floor(origInvest / realPrice)
         if (orderQty <= 0) orderQty = 1
+        console.log(`[시간외 ${logTime()}] ${name} 현재가 ${realPrice.toLocaleString()}원 → ${orderQty}주 × ${orderPrice.toLocaleString()}원 (투자금 ${origInvest.toLocaleString()}원)`)
       }
-    } catch { /* 현재가 조회 실패 시 스캔가격 사용 */ }
+    } catch (e) {
+      console.log(`[시간외 ${logTime()}] ${name} 현재가 조회 실패 → 스캔가격 ${price.toLocaleString()}원 사용: ${e instanceof Error ? e.message : e}`)
+    }
   }
 
   try {
