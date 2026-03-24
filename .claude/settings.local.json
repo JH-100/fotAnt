@@ -100,7 +100,8 @@
       "Bash(node -e \"let d='''''''';process.stdin.on\\(''''data'''',c=>d+=c\\);process.stdin.on\\(''''end'''',\\(\\)=>{const j=JSON.parse\\(d\\);j.forEach\\(s=>console.log\\(s.code,s.name\\)\\)}\\)\")",
       "Bash(curl -s http://localhost:3000/api/watchlist)",
       "Bash(curl -s -X POST http://localhost:3000/api/watchlist -H \"Content-Type: application/json\" -d \"{\"\"action\"\":\"\"add\"\",\"\"code\"\":\"\"011170\"\",\"\"name\"\":\"\"롯데케미칼\"\"}\")",
-      "Bash(find /c/ceJava/htdocs/forAnt/src -name *cache* -o -name *Cache*)"
+      "Bash(find /c/ceJava/htdocs/forAnt/src -name *cache* -o -name *Cache*)",
+      "Bash(ls C:/ceJava/htdocs/forAnt/src/app/\\\\\\(dashboard\\\\\\)/us-stocks/)"
     ]
   }
 }

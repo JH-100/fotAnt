@@ -7,6 +7,7 @@ import { usePathname } from 'next/navigation'
 const NAV_ITEMS = [
   { href: '/', label: '대시보드' },
   { href: '/auto-trade', label: '자동매매' },
+  { href: '/us-stocks', label: '미장' },
   { href: '/settings', label: '설정' },
 ]
 

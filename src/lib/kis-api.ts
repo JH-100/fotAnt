@@ -713,3 +713,78 @@ export const aggregateMinuteBars = (bars: MinutePrice[], intervalMin: number): M
 
   return result
 }
+
+// ─── 해외주식 현재가 조회 ──────────────────────────
+
+export interface OverseasPrice {
+  price: number       // USD
+  change: number      // 전일대비 USD
+  changePercent: number // 등락률 %
+  volume: number
+}
+
+export const getKisOverseasPrice = async (
+  symbol: string, exchange: string, mode?: TradingMode
+): Promise<OverseasPrice> => {
+  const m = mode ?? defaultMode()
+  const trId = m === 'real' ? 'HHDFS00000300' : 'VHHDFS00000300'
+  const headers = await getHeaders(m, trId)
+  const cfg = getModeConfig(m)
+
+  const params = new URLSearchParams({ AUTH: '', EXCD: exchange, SYMB: symbol })
+  const res = await fetch(
+    `${cfg.baseUrl}/uapi/overseas-price/v1/quotations/price?${params.toString()}`,
+    { headers }
+  )
+
+  if (!res.ok) throw new Error(`KIS 해외 현재가 조회 실패: ${res.status}`)
+  const data = await res.json()
+  if (data.rt_cd !== '0') throw new Error(`KIS 해외 현재가 오류: ${data.msg1}`)
+
+  const output = data.output ?? {}
+  return {
+    price: parseFloat(output.last ?? '0'),
+    change: parseFloat(output.diff ?? '0'),
+    changePercent: parseFloat(output.rate ?? '0'),
+    volume: parseInt(output.tvol ?? '0', 10),
+  }
+}
+
+// ─── 해외주식 일봉 조회 ──────────────────────────
+
+export const getKisOverseasDailyPrices = async (
+  symbol: string, exchange: string, days: number = 60, mode?: TradingMode
+): Promise<DailyPrice[]> => {
+  const m = mode ?? defaultMode()
+  const trId = m === 'real' ? 'HHDFS76240000' : 'VHHDFS76240000'
+  const headers = await getHeaders(m, trId)
+  const cfg = getModeConfig(m)
+
+  const params = new URLSearchParams({
+    AUTH: '', EXCD: exchange, SYMB: symbol,
+    GUBN: '0', BYMD: '', MODP: '0',
+  })
+  const res = await fetch(
+    `${cfg.baseUrl}/uapi/overseas-price/v1/quotations/dailyprice?${params.toString()}`,
+    { headers }
+  )
+
+  if (!res.ok) throw new Error(`KIS 해외 일봉 조회 실패: ${res.status}`)
+  const data = await res.json()
+  if (data.rt_cd !== '0') throw new Error(`KIS 해외 일봉 오류: ${data.msg1}`)
+
+  const prices: DailyPrice[] = (data.output2 ?? [])
+    .map((item: Record<string, string>) => ({
+      date: item.xymd ?? '',
+      open: parseFloat(item.open ?? '0'),
+      high: parseFloat(item.high ?? '0'),
+      low: parseFloat(item.low ?? '0'),
+      close: parseFloat(item.clos ?? '0'),
+      volume: parseInt(item.tvol ?? '0', 10),
+    }))
+    .filter((p: DailyPrice) => p.close > 0)
+    .slice(0, days)
+    .reverse()
+
+  return prices
+}
