@@ -54,6 +54,7 @@ interface PositionMeta {
   buyPrice: number          // 매수 단가
   firstPartialSold: boolean // 1차 분할익절 완료 여부
   atrPercent: number        // ATR% (변동성 기반 포지션 사이징용)
+  buyTimestamp: number      // 매수 시각 (Date.now())
 }
 const positionMetas: Record<string, PositionMeta> = {}
 
@@ -532,21 +533,27 @@ const _executeScalpingCycleInner = async (
           }
         }
       }
-      // 추세 악화 시 조기 매도
+      // 추세 악화 시 조기 매도 (최소 10분 보유 후에만)
       else if (pnlPercent < 0 && pnlPercent > -sl) {
         const meta = positionMetas[holding.code]
-        if (meta && meta.buyScore < 35 && pnlPercent < -1) {
-          const log = await executeSell(
-            holding.code, holding.name, holding.quantity, holding.currentPrice,
-            `⚠️ 약매수 + 하락 → 조기 탈출 (${pnlPercent.toFixed(1)}%)`,
-            config
-          )
-          if (log) {
-            newLogs.push(log)
-            if (log.result === 'success') {
-              dailyPnL += holding.profitLoss
-              delete positionMetas[holding.code]
+        if (meta && meta.buyScore < 35 && pnlPercent <= -1.5) {
+          const holdMs = Date.now() - (meta.buyTimestamp || 0)
+          const holdMinutes = Math.floor(holdMs / 60000)
+          if (holdMs >= 10 * 60 * 1000) {
+            const log = await executeSell(
+              holding.code, holding.name, holding.quantity, holding.currentPrice,
+              `⚠️ 약매수 + 하락 → 조기 탈출 (${pnlPercent.toFixed(1)}%, 보유 ${holdMinutes}분)`,
+              config
+            )
+            if (log) {
+              newLogs.push(log)
+              if (log.result === 'success') {
+                dailyPnL += holding.profitLoss
+                delete positionMetas[holding.code]
+              }
             }
+          } else {
+            console.log(`[스캘핑 ${logTime()}] ${holding.name} 홀딩 유지 — 보유 ${holdMinutes}분 (최소 10분)`)
           }
         }
       }
@@ -680,6 +687,8 @@ const _executeScalpingCycleInner = async (
     }
 
     // 신규 종목 매수
+    let balanceExhausted = false
+    const failedCodes = new Set<string>()
     for (const target of newBuyTargets) {
       if (dailyOrderCount >= config.maxDailyOrders) {
         console.log(`[스캘핑 ${logTime()}] 일일 주문 한도 도달 (${dailyOrderCount}/${config.maxDailyOrders})`)
@@ -691,6 +700,11 @@ const _executeScalpingCycleInner = async (
         console.log(`[스캘핑 ${logTime()}] ${LOSS_LABELS[currentLossLevel]} — 이번 사이클 매수 한도 도달 (${newBuyCount}건)`)
         break
       }
+
+      // 잔고 부족 시 남은 매수 전부 스킵
+      if (balanceExhausted) continue
+      // 이미 실패한 종목은 재시도하지 않음
+      if (failedCodes.has(target.code)) continue
 
       // ETF/레버리지/인버스 매수 차단
       if (isETF(target.name)) {
@@ -747,6 +761,15 @@ const _executeScalpingCycleInner = async (
             buyPrice: target.price,
             firstPartialSold: false,
             atrPercent: target.atrPercent,
+            buyTimestamp: Date.now(),
+          }
+        } else {
+          failedCodes.add(target.code)
+          // 잔고 부족 에러 감지 → 남은 매수 전부 스킵
+          const errMsg = log.message ?? ''
+          if (errMsg.includes('주문가능금액') || errMsg.includes('주문 가능 금액')) {
+            balanceExhausted = true
+            console.log(`[스캘핑 ${logTime()}] 잔고 부족 — 남은 매수 스킵`)
           }
         }
       }
@@ -759,6 +782,8 @@ const _executeScalpingCycleInner = async (
     for (const { scan: target, holding } of (allowAddBuy ? addBuyTargets : [])) {
       if (dailyOrderCount >= config.maxDailyOrders) break
       if (freshCash < config.maxPerTrade * 0.3) break
+      if (balanceExhausted) continue
+      if (failedCodes.has(target.code)) continue
       if (isETF(target.name)) continue // ETF 추가매수도 차단
 
       const totalInvested = holding.avgPrice * holding.quantity
@@ -791,7 +816,15 @@ const _executeScalpingCycleInner = async (
               buyPrice: prevMeta?.buyPrice ?? target.price,
               firstPartialSold: prevMeta?.firstPartialSold ?? false,
               atrPercent: target.atrPercent,
+              buyTimestamp: prevMeta?.buyTimestamp ?? Date.now(),
             }
+          }
+        } else {
+          failedCodes.add(target.code)
+          const errMsg = log.message ?? ''
+          if (errMsg.includes('주문가능금액') || errMsg.includes('주문 가능 금액')) {
+            balanceExhausted = true
+            console.log(`[스캘핑 ${logTime()}] 잔고 부족 — 남은 매수 스킵`)
           }
         }
       }

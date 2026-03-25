@@ -666,11 +666,10 @@ export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
   try {
     const rank = await getKisVolumeRank(mode)
     const filtered = rank.filter(r => r.price >= 500 && !isETF(r.name))
-    // ★ 사전 필터링: 분봉 분석 전에 명확한 비대상 제거 → API 절약
+    // ★ 사전 필터링: 급락주만 제외 (급등주는 포함 — 삼천당제약 같은 대장주 놓치지 않도록)
     trending = filtered
       .filter(r => {
         if (r.change < -5) return false  // 급락주 제외 (하락 추세)
-        if (r.change > 15) return false  // 과열주 제외 (추격매수 위험)
         return true
       })
       .map(r => ({ code: r.code, name: r.name, price: r.price, change: r.change }))

@@ -298,7 +298,26 @@ const runScan = async () => {
     const results = await scanUSStocks(currentMode)
     // BUY/SELL만 로그에 추가 (HOLD는 노이즈)
     const significant = results.filter(r => r.signal !== 'HOLD')
-    recommendationLogs.unshift(...significant)
+
+    // ★ 중복 제거: 같은 종목은 시그널이 바뀌었을 때만 새로 추가, 아니면 덮어쓰기
+    for (const rec of significant) {
+      const existIdx = recommendationLogs.findIndex(r => r.symbol === rec.symbol)
+      if (existIdx !== -1) {
+        const existing = recommendationLogs[existIdx]
+        if (existing.signal === rec.signal) {
+          // 시그널 동일 → 가격/점수만 업데이트 (중복 카드 방지)
+          recommendationLogs[existIdx] = rec
+        } else {
+          // 시그널 변경 → 기존 제거 + 최신을 맨 앞에 추가
+          recommendationLogs.splice(existIdx, 1)
+          recommendationLogs.unshift(rec)
+        }
+      } else {
+        // 새 종목 → 맨 앞에 추가
+        recommendationLogs.unshift(rec)
+      }
+    }
+
     // 최대 200건 유지
     if (recommendationLogs.length > 200) {
       recommendationLogs = recommendationLogs.slice(0, 200)
