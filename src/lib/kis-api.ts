@@ -378,7 +378,18 @@ export const getKisOrderableCash = async (mode?: TradingMode): Promise<number> =
   }
 
   const output = data.output ?? {}
-  const orderableAmt = parseInt(output.ord_psbl_cash ?? output.nrcvb_buy_amt ?? '0', 10)
+  // 모든 금액 필드 출력해서 어디에 주문가능금액이 있는지 확인
+  const fields = Object.entries(output)
+    .filter(([, v]) => typeof v === 'string' && /^\d+$/.test(v as string) && parseInt(v as string, 10) > 0)
+    .map(([k, v]) => `${k}=${parseInt(v as string, 10).toLocaleString()}`)
+    .join(', ')
+  console.log(`[KIS매수가능] ${fields || 'empty'}`)
+  const orderableAmt = Math.max(
+    parseInt(output.ord_psbl_cash ?? '0', 10),
+    parseInt(output.nrcvb_buy_amt ?? '0', 10),
+    parseInt(output.max_buy_amt ?? '0', 10),
+    parseInt(output.ord_psbl_frcr_amt ?? '0', 10),
+  )
   console.log(`[KIS잔고] 매수가능조회: ${orderableAmt.toLocaleString()}원`)
   return orderableAmt
 }
