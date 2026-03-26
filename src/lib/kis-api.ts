@@ -320,8 +320,12 @@ export const getKisBalance = async (mode?: TradingMode): Promise<KisBalance> => 
 
   const summary = data.output2?.[0] ?? {}
   const cashBalance = parseInt(summary.dnca_tot_amt ?? '0', 10)
-  // 주문가능금액: 미수 없는 매수가능금액 (미체결 주문 반영된 실제 가용 금액)
-  const orderableCash = parseInt(summary.nrcvb_buy_amt ?? summary.dnca_tot_amt ?? '0', 10)
+  // 주문가능금액: 여러 필드 중 가장 큰 값 사용 (KIS API 버전별로 필드명이 다름)
+  const nrcvb = parseInt(summary.nrcvb_buy_amt ?? '0', 10)
+  const ordPsbl = parseInt(summary.ord_psbl_cash ?? '0', 10)
+  const prvRuse = parseInt(summary.prvs_ruse_psbl_amt ?? '0', 10)
+  const orderableCash = Math.max(nrcvb, ordPsbl, prvRuse, cashBalance)
+  console.log(`[KIS잔고] 예수금=${cashBalance.toLocaleString()} 주문가능=${orderableCash.toLocaleString()} (nrcvb=${nrcvb} ordPsbl=${ordPsbl} prvRuse=${prvRuse})`)
   const totalEval = parseInt(summary.tot_evlu_amt ?? '0', 10)
   const purchaseTotal = parseInt(summary.pchs_amt_smtl_amt ?? '0', 10)
   const evalTotal = parseInt(summary.evlu_amt_smtl_amt ?? '0', 10)
