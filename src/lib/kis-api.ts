@@ -284,11 +284,11 @@ export const getKisBalance = async (mode?: TradingMode): Promise<KisBalance> => 
     ACNT_PRDT_CD: acntPrdtCd,
     AFHR_FLPR_YN: 'N',
     OFL_YN: '',
-    INQR_DVSN: '02',
+    INQR_DVSN: '01',
     UNPR_DVSN: '01',
     FUND_STTL_ICLD_YN: 'N',
     FNCG_AMT_AUTO_RDPT_YN: 'N',
-    PRCS_DVSN: '01',
+    PRCS_DVSN: '00',
     CTX_AREA_FK100: '',
     CTX_AREA_NK100: '',
   })
@@ -342,6 +342,45 @@ export const getKisBalance = async (mode?: TradingMode): Promise<KisBalance> => 
     totalProfitLoss,
     totalProfitLossPercent: Math.round(totalProfitLossPercent * 100) / 100,
   }
+}
+
+// ─── 매수가능금액 조회 (주문가능원화) ──────────────────
+export const getKisOrderableCash = async (mode?: TradingMode): Promise<number> => {
+  const m = mode ?? defaultMode()
+  const cfg = getModeConfig(m)
+  const trId = m === 'real' ? 'TTTC8908R' : 'VTTC8908R'
+  const headers = await getHeaders(m, trId)
+  const [cano, acntPrdtCd] = cfg.accountNo.split('-')
+
+  const params = new URLSearchParams({
+    CANO: cano ?? '',
+    ACNT_PRDT_CD: acntPrdtCd ?? '',
+    PDNO: '005930',           // 아무 종목 (삼성전자)
+    ORD_UNPR: '50000',        // 기준가
+    ORD_DVSN: '01',           // 시장가
+    CMA_EVLU_AMT_ICLD_YN: 'Y', // CMA 평가금 포함
+    OVRS_ICLD_YN: 'N',
+  })
+
+  const res = await fetch(
+    `${cfg.baseUrl}/uapi/domestic-stock/v1/trading/inquire-psbl-order?${params.toString()}`,
+    { headers }
+  )
+
+  if (!res.ok) {
+    console.log(`[KIS] 매수가능조회 실패: HTTP ${res.status}`)
+    return 0
+  }
+  const data = await res.json()
+  if (data.rt_cd !== '0') {
+    console.log(`[KIS] 매수가능조회 오류: ${data.msg1}`)
+    return 0
+  }
+
+  const output = data.output ?? {}
+  const orderableAmt = parseInt(output.ord_psbl_cash ?? output.nrcvb_buy_amt ?? '0', 10)
+  console.log(`[KIS잔고] 매수가능조회: ${orderableAmt.toLocaleString()}원`)
+  return orderableAmt
 }
 
 // ─── 주문 실행 ──────────────────────────────────────

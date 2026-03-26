@@ -10,7 +10,7 @@ const logTime = () => {
 }
 
 import type { KisBalance } from '@/types/kis'
-import { getKisBalance, getKisMinutePrices, aggregateMinuteBars, placeKisOrder, getKisCurrentPrice } from './kis-api'
+import { getKisBalance, getKisMinutePrices, aggregateMinuteBars, placeKisOrder, getKisCurrentPrice, getKisOrderableCash } from './kis-api'
 import type { TradingMode } from './kis-api'
 import { scanMarket, type ScanResult } from './stock-scanner'
 import { calcMinuteATR } from './indicators'
@@ -622,8 +622,13 @@ const _executeScalpingCycleInner = async (
   if (freshBalance && currentLossLevel !== 'full-stop') {
     const currentPositionCount = freshBalance.holdings.filter(h => h.quantity > 0).length
     let positionSlots = effectiveMaxPositions - currentPositionCount
-    // orderableCash = 실제 주문가능금액 (미체결 주문 반영), cashBalance = 예수금 총액
-    let freshCash = Math.min(freshBalance.orderableCash ?? freshBalance.cashBalance, config.budget)
+    // 매수가능조회 API로 실제 주문가능금액 조회 (잔고조회의 예수금과 다를 수 있음)
+    let freshCash = freshBalance.cashBalance
+    try {
+      const orderableAmt = await getKisOrderableCash(config.mode)
+      if (orderableAmt > 0) freshCash = orderableAmt
+    } catch { /* 실패 시 cashBalance 사용 */ }
+    freshCash = Math.min(freshCash, config.budget)
     let newBuyCount = 0
 
     // ─── 4A. 신규 매수 ───

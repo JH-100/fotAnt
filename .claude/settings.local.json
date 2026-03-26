@@ -101,7 +101,9 @@
       "Bash(curl -s http://localhost:3000/api/watchlist)",
       "Bash(curl -s -X POST http://localhost:3000/api/watchlist -H \"Content-Type: application/json\" -d \"{\"\"action\"\":\"\"add\"\",\"\"code\"\":\"\"011170\"\",\"\"name\"\":\"\"롯데케미칼\"\"}\")",
       "Bash(find /c/ceJava/htdocs/forAnt/src -name *cache* -o -name *Cache*)",
-      "Bash(ls C:/ceJava/htdocs/forAnt/src/app/\\\\\\(dashboard\\\\\\)/us-stocks/)"
+      "Bash(ls C:/ceJava/htdocs/forAnt/src/app/\\\\\\(dashboard\\\\\\)/us-stocks/)",
+      "Bash(powershell -Command \"Get-WmiObject Win32_Process -Filter \"\"Name=''''node.exe''''\"\" | Where-Object { $_CommandLine -like ''''*next*start*'''' } | ForEach-Object { Stop-Process -Id $_ProcessId -Force }\")",
+      "Bash(git pull:*)"
     ]
   }
 }
