@@ -622,7 +622,8 @@ const _executeScalpingCycleInner = async (
   if (freshBalance && currentLossLevel !== 'full-stop') {
     const currentPositionCount = freshBalance.holdings.filter(h => h.quantity > 0).length
     let positionSlots = effectiveMaxPositions - currentPositionCount
-    let freshCash = Math.min(freshBalance.cashBalance, config.budget)
+    // orderableCash = 실제 주문가능금액 (미체결 주문 반영), cashBalance = 예수금 총액
+    let freshCash = Math.min(freshBalance.orderableCash ?? freshBalance.cashBalance, config.budget)
     let newBuyCount = 0
 
     // ─── 4A. 신규 매수 ───
