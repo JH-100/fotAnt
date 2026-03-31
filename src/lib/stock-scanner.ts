@@ -128,10 +128,10 @@ const analyzeWithMinuteBars = async (
   code: string, name: string, price: number, change: number, mode?: TradingMode
 ): Promise<ScanResult | null> => {
   const rawBars = await getKisMinutePrices(code, mode)
-  if (rawBars.length < 20) return null
+  if (rawBars.length < 10) return null  // 최소 10개 1분봉 (기존 20 → 10으로 완화)
 
   const bars5 = aggregateMinuteBars(rawBars, 5)
-  if (bars5.length < 10) return null
+  if (bars5.length < 3) return null  // 최소 3개 5분봉 (기존 10 → 3으로 완화)
 
   const sorted1 = [...rawBars].sort((a, b) => a.time.localeCompare(b.time))
   const sorted5 = [...bars5].sort((a, b) => a.time.localeCompare(b.time))
