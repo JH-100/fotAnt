@@ -101,10 +101,17 @@ const determineLossLevel = (pnl: number, _budget: number): LossLevel => {
 }
 
 // ─── 엔진 상태 (메모리) ────────────────────────────
-let dailyOrderCount = 0
-let lastResetDate = ''
-let dailyPnL = 0
-let currentLossLevel: LossLevel = 'normal'
+// 모드별 독립 통계 (모의/실전 손익이 서로 영향 안 줌)
+interface ModeStats { orderCount: number; pnl: number; lossLevel: LossLevel; resetDate: string }
+const modeStats: Record<string, ModeStats> = {
+  mock: { orderCount: 0, pnl: 0, lossLevel: 'normal', resetDate: '' },
+  real: { orderCount: 0, pnl: 0, lossLevel: 'normal', resetDate: '' },
+}
+const getMS = (mode: string) => modeStats[mode] ?? modeStats['mock']!
+
+// 하위호환용 (getDailyStats, resetDailyStats에서 사용)
+let _activeMode = 'mock'
+
 const tradeLogs: TradeLogEntry[] = []
 let lastScanResults: ScanResult[] = []
 let cycleRunning = false  // 동시실행 방지 플래그
@@ -114,10 +121,12 @@ export const restoreLogs = (logs: TradeLogEntry[]) => {
   tradeLogs.length = 0
   tradeLogs.push(...logs)
 }
-export const restoreStats = (stats: { orders: number; pnl: number; date: string }) => {
-  dailyOrderCount = stats.orders
-  dailyPnL = stats.pnl
-  lastResetDate = stats.date
+export const restoreStats = (stats: { orders: number; pnl: number; date: string; mode?: string }) => {
+  const mode = stats.mode ?? 'mock'
+  const ms = getMS(mode)
+  ms.orderCount = stats.orders
+  ms.pnl = stats.pnl
+  ms.resetDate = stats.date
 }
 
 // ─── 거래 성과 학습 (reason별 승률 추적) ────────
@@ -266,17 +275,18 @@ export const getWeeklyReport = (): { days: DailyReport[]; summary: { totalPnL: n
   return { days, summary: { totalPnL, avgWinRate, totalOrders } }
 }
 
-const resetDailyIfNeeded = () => {
+const resetDailyIfNeeded = (mode: string) => {
+  const ms = getMS(mode)
   const today = new Date().toISOString().split('T')[0] ?? ''
-  if (today !== lastResetDate) {
+  if (today !== ms.resetDate) {
     // ★ 전일 리포트 자동 생성 (리셋 전에)
-    if (lastResetDate && tradeLogs.length > 0) {
+    if (ms.resetDate && tradeLogs.length > 0) {
       try { generateDailyReport() } catch (e) { console.log(`[리포트] 전일 리포트 생성 실패: ${e}`) }
     }
-    dailyOrderCount = 0
-    dailyPnL = 0
-    currentLossLevel = 'normal'
-    lastResetDate = today
+    ms.orderCount = 0
+    ms.pnl = 0
+    ms.lossLevel = 'normal'
+    ms.resetDate = today
     for (const code of Object.keys(positionMetas)) {
       delete positionMetas[code]
     }
@@ -285,7 +295,17 @@ const resetDailyIfNeeded = () => {
 
 export const getScalpingLogs = (): TradeLogEntry[] => [...tradeLogs].reverse()
 export const getLastScan = (): ScanResult[] => lastScanResults
-export const getDailyStats = () => ({ orders: dailyOrderCount, pnl: dailyPnL, lossLevel: currentLossLevel })
+export const getDailyStats = () => {
+  const ms = getMS(_activeMode)
+  return { orders: ms.orderCount, pnl: ms.pnl, lossLevel: ms.lossLevel }
+}
+export const resetDailyStats = (mode?: string) => {
+  const ms = getMS(mode ?? _activeMode)
+  ms.orderCount = 0
+  ms.pnl = 0
+  ms.lossLevel = 'normal'
+  for (const code of Object.keys(positionMetas)) delete positionMetas[code]
+}
 
 /** 장 운영시간 체크 (장전시간외 08:20 ~ 시간외단일가 18:00, NXT 포함) */
 export const isMarketOpen = (): boolean => {
@@ -412,17 +432,19 @@ const _executeScalpingCycleInner = async (
   config: ScalpingConfig,
   password?: string
 ): Promise<{ logs: TradeLogEntry[]; scan: ScanResult[] }> => {
-  resetDailyIfNeeded()
+  _activeMode = config.mode ?? 'mock'
+  const ms = getMS(_activeMode)
+  resetDailyIfNeeded(_activeMode)
   const newLogs: TradeLogEntry[] = []
 
   // 일일 손실 레벨 판단 (단계별 리스크 관리 — 매도는 항상 실행)
-  const prevLevel = currentLossLevel
-  currentLossLevel = determineLossLevel(dailyPnL, config.budget)
-  if (currentLossLevel !== prevLevel) {
-    console.log(`[스캘핑 ${logTime()}] 모드 전환: ${LOSS_LABELS[prevLevel]} → ${LOSS_LABELS[currentLossLevel]} (일손익 ${dailyPnL.toLocaleString()}원)`)
+  const prevLevel = ms.lossLevel
+  ms.lossLevel = determineLossLevel(ms.pnl, config.budget)
+  if (ms.lossLevel !== prevLevel) {
+    console.log(`[스캘핑 ${logTime()}] 모드 전환: ${LOSS_LABELS[prevLevel]} → ${LOSS_LABELS[ms.lossLevel]} (일손익 ${ms.pnl.toLocaleString()}원)`)
   }
-  if (currentLossLevel !== 'normal') {
-    console.log(`[스캘핑 ${logTime()}] 현재 ${LOSS_LABELS[currentLossLevel]} — 일손익 ${dailyPnL.toLocaleString()}원`)
+  if (ms.lossLevel !== 'normal') {
+    console.log(`[스캘핑 ${logTime()}] 현재 ${LOSS_LABELS[ms.lossLevel]} — 일손익 ${ms.pnl.toLocaleString()}원`)
   }
 
   // 1. 잔고 조회 (실패해도 스캔은 계속)
@@ -431,7 +453,7 @@ const _executeScalpingCycleInner = async (
   // 2. 보유종목 → 트레일링 스탑 + 분할 익절 + 동적 익절/손절
   if (balance) {
     for (const holding of balance.holdings) {
-      if (dailyOrderCount >= config.maxDailyOrders) break
+      if (ms.orderCount >= config.maxDailyOrders) break
       if (holding.quantity <= 0) continue
 
       const pnlPercent = holding.profitLossPercent
@@ -451,7 +473,7 @@ const _executeScalpingCycleInner = async (
         )
         if (log) {
           newLogs.push(log)
-          if (log.result === 'success') { dailyPnL += holding.profitLoss; delete positionMetas[holding.code] }
+          if (log.result === 'success') { ms.pnl += holding.profitLoss; delete positionMetas[holding.code] }
         }
         continue
       }
@@ -476,7 +498,7 @@ const _executeScalpingCycleInner = async (
           )
           if (log) {
             newLogs.push(log)
-            if (log.result === 'success') { dailyPnL += holding.profitLoss; delete positionMetas[holding.code] }
+            if (log.result === 'success') { ms.pnl += holding.profitLoss; delete positionMetas[holding.code] }
           }
           continue
         }
@@ -495,7 +517,7 @@ const _executeScalpingCycleInner = async (
               newLogs.push(log)
               if (log.result === 'success') {
                 meta.firstPartialSold = true
-                dailyPnL += Math.round(holding.profitLoss * (partialQty / holding.quantity))
+                ms.pnl += Math.round(holding.profitLoss * (partialQty / holding.quantity))
               }
             }
             continue
@@ -513,7 +535,7 @@ const _executeScalpingCycleInner = async (
         if (log) {
           newLogs.push(log)
           if (log.result === 'success') {
-            dailyPnL += holding.profitLoss
+            ms.pnl += holding.profitLoss
             delete positionMetas[holding.code]
           }
         }
@@ -528,7 +550,7 @@ const _executeScalpingCycleInner = async (
         if (log) {
           newLogs.push(log)
           if (log.result === 'success') {
-            dailyPnL += holding.profitLoss
+            ms.pnl += holding.profitLoss
             delete positionMetas[holding.code]
           }
         }
@@ -548,7 +570,7 @@ const _executeScalpingCycleInner = async (
             if (log) {
               newLogs.push(log)
               if (log.result === 'success') {
-                dailyPnL += holding.profitLoss
+                ms.pnl += holding.profitLoss
                 delete positionMetas[holding.code]
               }
             }
@@ -589,15 +611,15 @@ const _executeScalpingCycleInner = async (
   // ─── 손실 레벨별 매수 제한 ───
   let maxNewBuysThisCycle = Infinity
   let allowAddBuy = true
-  if (currentLossLevel === 'full-stop') {
+  if (ms.lossLevel === 'full-stop') {
     console.log(`[스캘핑 ${logTime()}] 완전 중단 모드 — 신규 매수 차단 (보유종목 매도/관리는 계속)`)
-  } else if (currentLossLevel === 'recovery') {
+  } else if (ms.lossLevel === 'recovery') {
     effectiveMinScore += 20
     effectiveMaxPerTrade = Math.round(effectiveMaxPerTrade * 0.5)
     maxNewBuysThisCycle = 1
     allowAddBuy = false
     console.log(`[스캘핑 ${logTime()}] 복구 모드 매수 제한 — 최소점수 ${effectiveMinScore}, 건당 ${effectiveMaxPerTrade.toLocaleString()}원, 최대 1건, 추가매수 X`)
-  } else if (currentLossLevel === 'conservative') {
+  } else if (ms.lossLevel === 'conservative') {
     effectiveMinScore += 10
     effectiveMaxPerTrade = Math.round(effectiveMaxPerTrade * 0.7)
     effectiveMaxPositions = Math.min(effectiveMaxPositions, 3)
@@ -607,19 +629,19 @@ const _executeScalpingCycleInner = async (
   // ★ 마감 30분: 보유 포지션 수익 중이면 익절 우선
   if (isClosingPeriod() && balance) {
     for (const holding of balance.holdings) {
-      if (holding.quantity <= 0 || dailyOrderCount >= config.maxDailyOrders) continue
+      if (holding.quantity <= 0 || ms.orderCount >= config.maxDailyOrders) continue
       if (holding.profitLossPercent > 0.3) {
         console.log(`[스캘핑 ${logTime()}] 장마감임박 — ${holding.name} 수익 ${holding.profitLossPercent.toFixed(1)}% → 마감 익절`)
         const log = await executeSell(
           holding.code, holding.name, holding.quantity, holding.currentPrice,
           `⏰ 장마감 익절 ${holding.profitLossPercent.toFixed(1)}%`, config
         )
-        if (log) { newLogs.push(log); if (log.result === 'success') { dailyPnL += holding.profitLoss; delete positionMetas[holding.code] } }
+        if (log) { newLogs.push(log); if (log.result === 'success') { ms.pnl += holding.profitLoss; delete positionMetas[holding.code] } }
       }
     }
   }
 
-  if (freshBalance && currentLossLevel !== 'full-stop') {
+  if (freshBalance && ms.lossLevel !== 'full-stop') {
     const currentPositionCount = freshBalance.holdings.filter(h => h.quantity > 0).length
     let positionSlots = effectiveMaxPositions - currentPositionCount
     // 매수가능조회 API로 실제 주문가능금액 조회 (잔고조회의 예수금과 다를 수 있음)
@@ -647,7 +669,7 @@ const _executeScalpingCycleInner = async (
       .filter(s => s.signal === 'BUY' && s.score >= effectiveMinScore)
 
     // ★ 복구 모드: 외국인/기관 순매수 종목만 허용
-    if (currentLossLevel === 'recovery') {
+    if (ms.lossLevel === 'recovery') {
       buySignals = buySignals.filter(s => {
         const hasSupply = (s.foreignNetBuy ?? 0) > 0 || (s.institutionNetBuy ?? 0) > 0
         if (!hasSupply) console.log(`[스캘핑 ${logTime()}] 복구 모드 — ${s.name}(${s.score}점) 수급 미달로 제외`)
@@ -696,14 +718,14 @@ const _executeScalpingCycleInner = async (
     let balanceExhausted = false
     const failedCodes = new Set<string>()
     for (const target of newBuyTargets) {
-      if (dailyOrderCount >= config.maxDailyOrders) {
-        console.log(`[스캘핑 ${logTime()}] 일일 주문 한도 도달 (${dailyOrderCount}/${config.maxDailyOrders})`)
+      if (ms.orderCount >= config.maxDailyOrders) {
+        console.log(`[스캘핑 ${logTime()}] 일일 주문 한도 도달 (${ms.orderCount}/${config.maxDailyOrders})`)
         break
       }
       if (positionSlots <= 0) break
       if (freshCash < effectiveMaxPerTrade * 0.3) break
       if (newBuyCount >= maxNewBuysThisCycle) {
-        console.log(`[스캘핑 ${logTime()}] ${LOSS_LABELS[currentLossLevel]} — 이번 사이클 매수 한도 도달 (${newBuyCount}건)`)
+        console.log(`[스캘핑 ${logTime()}] ${LOSS_LABELS[ms.lossLevel]} — 이번 사이클 매수 한도 도달 (${newBuyCount}건)`)
         break
       }
 
@@ -783,10 +805,10 @@ const _executeScalpingCycleInner = async (
 
     // ─── 4B. 추가 매수 (불타기/물타기) — 복구/완전중단 모드에서는 차단 ───
     if (!allowAddBuy && addBuyTargets.length > 0) {
-      console.log(`[스캘핑 ${logTime()}] ${LOSS_LABELS[currentLossLevel]} — 추가매수(불타기/물타기) 차단`)
+      console.log(`[스캘핑 ${logTime()}] ${LOSS_LABELS[ms.lossLevel]} — 추가매수(불타기/물타기) 차단`)
     }
     for (const { scan: target, holding } of (allowAddBuy ? addBuyTargets : [])) {
-      if (dailyOrderCount >= config.maxDailyOrders) break
+      if (ms.orderCount >= config.maxDailyOrders) break
       if (freshCash < config.maxPerTrade * 0.3) break
       if (balanceExhausted) continue
       if (failedCodes.has(target.code)) continue
@@ -835,7 +857,7 @@ const _executeScalpingCycleInner = async (
         }
       }
     }
-  } else if (currentLossLevel === 'full-stop') {
+  } else if (ms.lossLevel === 'full-stop') {
     console.log('[스캘핑] 완전 중단 모드 — 매수 차단, 보유종목 관리만 실행')
   } else {
     console.log('[스캘핑] 잔고 조회 불가 — 매수 건너뜀 (스캔 결과만 반환)')
@@ -893,7 +915,7 @@ const executeBuy = async (
     }, config.mode)
 
     const isSuccess = result.status === 'executed'
-    if (isSuccess) dailyOrderCount++
+    if (isSuccess) getMS(config.mode ?? 'mock').orderCount++
     const log: TradeLogEntry = {
       id: `${Date.now()}-${code}-buy`,
       timestamp: new Date().toISOString(),
@@ -928,7 +950,7 @@ const executeBuy = async (
         }, config.mode)
 
         const nxtSuccess = nxtResult.status === 'executed'
-        if (nxtSuccess) dailyOrderCount++
+        if (nxtSuccess) getMS(config.mode ?? 'mock').orderCount++
         const log: TradeLogEntry = {
           id: `${Date.now()}-${code}-buy-nxt`,
           timestamp: new Date().toISOString(),
@@ -983,7 +1005,7 @@ const executeSell = async (
 
     const sellSuccess = result.status === 'executed'
     if (sellSuccess) {
-      dailyOrderCount++
+      getMS(config.mode ?? 'mock').orderCount++
       // ★ 거래 성과 학습: 매도 성공 시 매수 당시 reason별 승률 기록
       const meta = positionMetas[code]
       if (meta) {
@@ -1017,7 +1039,7 @@ const executeSell = async (
         }, config.mode)
 
         const nxtSellOk = nxtResult.status === 'executed'
-        if (nxtSellOk) dailyOrderCount++
+        if (nxtSellOk) getMS(config.mode ?? 'mock').orderCount++
         const log: TradeLogEntry = {
           id: `${Date.now()}-${code}-sell-nxt`,
           timestamp: new Date().toISOString(),

@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import {
   executeScalpingCycle, isMarketOpen, getScalpingLogs, getLastScan, getDailyStats,
-  restoreLogs, restoreStats,
+  restoreLogs, restoreStats, resetDailyStats,
 } from './scalping-engine'
 import { getKisBalance } from './kis-api'
 import type { ScalpingConfig } from './scalping-engine'
@@ -47,7 +47,7 @@ const persistStats = () => {
   try {
     const stats = getDailyStats()
     const today = new Date().toISOString().split('T')[0] ?? ''
-    writeFileSync(STATS_FILE, JSON.stringify({ ...stats, date: today }), 'utf-8')
+    writeFileSync(STATS_FILE, JSON.stringify({ ...stats, date: today, mode: state.config.mode }), 'utf-8')
   } catch { /* ignore */ }
 }
 
@@ -138,8 +138,19 @@ const runCycle = async () => {
 /** 스케줄러 시작 */
 export const startScheduler = (config?: Partial<ScalpingConfig>) => {
   if (state.isRunning) {
+    const newMode = config?.mode
+    if (newMode && newMode !== state.config.mode) {
+      throw new Error(`현재 ${state.config.mode === 'real' ? '실전' : '모의'} 투자 실행 중입니다. 먼저 중지 후 시작하세요.`)
+    }
     if (config) Object.assign(state.config, config)
     return
+  }
+
+  // 모드가 바뀌는 경우 기존 손익/상태 초기화 (모의↔실전 교차 방지)
+  const newMode = config?.mode
+  if (newMode && newMode !== state.config.mode) {
+    resetDailyStats()
+    console.log(`[스캘핑 ${logTime()}] 모드 변경 (${state.config.mode} → ${newMode}) — 일일 통계 초기화`)
   }
 
   if (config) Object.assign(state.config, config)
