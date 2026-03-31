@@ -708,7 +708,7 @@ export const getKisMinutePrices = async (
   const data = await res.json()
   if (data.rt_cd !== '0') throw new Error(`KIS 분봉 오류: ${data.msg1}`)
 
-  const minutes: MinutePrice[] = (data.output2 ?? [])
+  const minutes: MinutePrice[] = (data.output ?? data.output2 ?? [])
     .map((item: Record<string, string>) => ({
       time: item.stck_cntg_hour ?? '',
       open: parseInt(item.stck_oprc ?? '0', 10),
