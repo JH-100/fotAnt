@@ -708,7 +708,13 @@ export const getKisMinutePrices = async (
   const data = await res.json()
   if (data.rt_cd !== '0') throw new Error(`KIS 분봉 오류: ${data.msg1}`)
 
-  const minutes: MinutePrice[] = (data.output ?? data.output2 ?? [])
+  // 디버그: API 응답 구조 확인
+  const outKeys = Object.keys(data).filter(k => k.startsWith('output'))
+  const out1Len = Array.isArray(data.output) ? data.output.length : (data.output ? 'obj' : 'null')
+  const out2Len = Array.isArray(data.output2) ? data.output2.length : (data.output2 ? 'obj' : 'null')
+  console.log(`[KIS분봉] ${code} 응답: keys=[${outKeys}] output=${out1Len} output2=${out2Len}`)
+
+  const minutes: MinutePrice[] = (data.output2 ?? data.output ?? [])
     .map((item: Record<string, string>) => ({
       time: item.stck_cntg_hour ?? '',
       open: parseInt(item.stck_oprc ?? '0', 10),
