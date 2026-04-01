@@ -255,14 +255,19 @@ export const scanUSStocks = async (mode?: TradingMode): Promise<UsRecommendation
     const batchResults = await Promise.allSettled(
       batch.map(async (stock) => {
         const data = await getKisOverseasDailyPrices(stock.symbol, stock.exchange, 60, mode)
+        if (data.length < 20) throw new Error(`데이터 부족 (${data.length}건)`)
         return analyzeUSStock(stock.symbol, stock.name, stock.exchange, data, usdKrw)
       })
     )
-    for (const r of batchResults) {
-      if (r.status === 'fulfilled' && r.value) {
+    for (let j = 0; j < batchResults.length; j++) {
+      const r = batchResults[j]
+      const stock = batch[j]
+      if (r && r.status === 'fulfilled' && r.value) {
         results.push(r.value)
       } else {
         failCount++
+        const errMsg = r && r.status === 'rejected' ? (r.reason instanceof Error ? r.reason.message : String(r.reason)) : 'null 반환'
+        console.log(`[미장] ${stock?.symbol}(${stock?.exchange}) 분석 실패: ${errMsg}`)
       }
     }
     if (i + batchSize < US_WATCHLIST.length) {
