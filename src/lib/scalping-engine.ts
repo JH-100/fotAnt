@@ -55,6 +55,10 @@ interface PositionMeta {
   firstPartialSold: boolean // 1차 분할익절 완료 여부
   atrPercent: number        // ATR% (변동성 기반 포지션 사이징용)
   buyTimestamp: number      // 매수 시각 (Date.now())
+  // 러너 모드 (1차 익절 후 나머지 추세 추종)
+  priceTarget: number       // 1차 목표가 절대가격 (저항선 기반)
+  runnerActive: boolean     // 러너 모드 진행 중
+  runnerTrailStop: number   // 러너 트레일링 스탑 가격
 }
 const positionMetas: Record<string, PositionMeta> = {}
 
@@ -115,6 +119,10 @@ let _activeMode = 'mock'
 const tradeLogs: TradeLogEntry[] = []
 let lastScanResults: ScanResult[] = []
 let cycleRunning = false  // 동시실행 방지 플래그
+
+// ─── 손절 쿨다운 (30분) ────────────────────────────
+const lossCooldown: Record<string, number> = {}  // code → 마지막 손절 timestamp
+const LOSS_COOLDOWN_MS = 30 * 60 * 1000          // 30분
 
 // 외부에서 로그/통계 복원용 (서버 스케줄러가 파일에서 읽어서 주입)
 export const restoreLogs = (logs: TradeLogEntry[]) => {
@@ -287,9 +295,8 @@ const resetDailyIfNeeded = (mode: string) => {
     ms.pnl = 0
     ms.lossLevel = 'normal'
     ms.resetDate = today
-    for (const code of Object.keys(positionMetas)) {
-      delete positionMetas[code]
-    }
+    for (const code of Object.keys(positionMetas)) delete positionMetas[code]
+    for (const code of Object.keys(lossCooldown)) delete lossCooldown[code]
   }
 }
 
@@ -473,7 +480,12 @@ const _executeScalpingCycleInner = async (
         )
         if (log) {
           newLogs.push(log)
-          if (log.result === 'success') { ms.pnl += holding.profitLoss; delete positionMetas[holding.code] }
+          if (log.result === 'success') {
+            ms.pnl += holding.profitLoss
+            delete positionMetas[holding.code]
+            lossCooldown[holding.code] = Date.now()
+            console.log(`[쿨다운] ${holding.name} 하드손절 후 30분 재진입 차단`)
+          }
         }
         continue
       }
@@ -487,6 +499,30 @@ const _executeScalpingCycleInner = async (
           ? ((meta.highWaterMark - holding.currentPrice) / meta.highWaterMark) * 100
           : 0
         const trailThreshold = Math.max(sl, meta.atrPercent * 2) // ATR 기반 트레일 폭
+
+        // ★ 러너 모드: 1차 익절 후 나머지 70%는 상한 없이 추세 추종
+        if (meta.runnerActive) {
+          // 최고가 갱신 시 트레일링 스탑 갱신 (ATR×3 또는 2% 중 큰 것)
+          const runnerTrailPct = Math.max(meta.atrPercent * 3, 2.0)
+          const newTrailStop = holding.currentPrice * (1 - runnerTrailPct / 100)
+          if (newTrailStop > meta.runnerTrailStop) {
+            meta.runnerTrailStop = newTrailStop
+          }
+          // 트레일링 스탑 도달 시 잔량 전량 청산
+          if (meta.runnerTrailStop > 0 && holding.currentPrice <= meta.runnerTrailStop) {
+            const peakPnl = ((meta.highWaterMark - meta.buyPrice) / meta.buyPrice) * 100
+            const log = await executeSell(
+              holding.code, holding.name, holding.quantity, holding.currentPrice,
+              `🚀 러너 청산 — 최고 +${peakPnl.toFixed(1)}% (현재 +${pnlPercent.toFixed(1)}%, 트레일 ${runnerTrailPct.toFixed(1)}%)`,
+              config
+            )
+            if (log) {
+              newLogs.push(log)
+              if (log.result === 'success') { ms.pnl += holding.profitLoss; delete positionMetas[holding.code] }
+            }
+          }
+          continue
+        }
 
         // 트레일링 발동: 수익 중이었다가 최고가 대비 trailThreshold% 하락
         if (pnlPercent > 0 && drawdownFromPeak >= trailThreshold && meta.highWaterMark > meta.buyPrice) {
@@ -503,20 +539,23 @@ const _executeScalpingCycleInner = async (
           continue
         }
 
-        // ★ 분할 익절: 1차 목표(tp의 80%) 도달 시 보유량 30% 매도 (나머지 70%는 트레일링)
-        if (!meta.firstPartialSold && pnlPercent >= tp * 0.8 && holding.quantity >= 2) {
+        // ★ 1차 분할 익절: 저항선 목표가 도달 시 30% 매도 → 나머지 70% 러너 모드 전환
+        if (!meta.firstPartialSold && pnlPercent >= tp && holding.quantity >= 2) {
           const partialQty = Math.floor(holding.quantity * 0.3)
           if (partialQty > 0) {
-            console.log(`[스캘핑 ${logTime()}] ${holding.name} 1차 분할익절 — ${pnlPercent.toFixed(1)}% (목표 ${tp.toFixed(1)}%의 60%) → ${partialQty}/${holding.quantity}주 매도`)
+            const targetPrice = meta.priceTarget > 0 ? `(목표가 ${meta.priceTarget.toLocaleString()}원)` : ''
+            console.log(`[스캘핑 ${logTime()}] ${holding.name} 1차 익절 + 러너 전환 — +${pnlPercent.toFixed(1)}% ${targetPrice} → ${partialQty}주 매도, ${holding.quantity - partialQty}주 러너`)
             const log = await executeSell(
               holding.code, holding.name, partialQty, holding.currentPrice,
-              `🎯½ 1차 분할익절 ${pnlPercent.toFixed(1)}% (${partialQty}/${holding.quantity}주, 나머지 트레일링)`,
+              `🎯 1차 익절 +${pnlPercent.toFixed(1)}% (${partialQty}주 청산, 나머지 ${holding.quantity - partialQty}주 러너 추세 추종)`,
               config
             )
             if (log) {
               newLogs.push(log)
               if (log.result === 'success') {
                 meta.firstPartialSold = true
+                meta.runnerActive = true
+                meta.runnerTrailStop = holding.currentPrice * (1 - Math.max(meta.atrPercent * 3, 2.0) / 100)
                 ms.pnl += Math.round(holding.profitLoss * (partialQty / holding.quantity))
               }
             }
@@ -525,11 +564,11 @@ const _executeScalpingCycleInner = async (
         }
       }
 
-      // 전량 익절 (분할익절 이후 잔량 또는 1주만 보유 시)
-      if (pnlPercent >= tp) {
+      // 전량 익절: 1주만 보유 중이거나 러너 미활성 상태에서 tp 도달
+      if (pnlPercent >= tp && !(meta?.runnerActive)) {
         const log = await executeSell(
           holding.code, holding.name, holding.quantity, holding.currentPrice,
-          `${meta?.firstPartialSold ? '2차 ' : ''}익절 ${pnlPercent.toFixed(1)}% (목표 ${tp.toFixed(1)}%, ATR 기반)`,
+          `${meta?.firstPartialSold ? '2차 ' : ''}익절 +${pnlPercent.toFixed(1)}% (목표 +${tp.toFixed(1)}%)`,
           config
         )
         if (log) {
@@ -552,6 +591,8 @@ const _executeScalpingCycleInner = async (
           if (log.result === 'success') {
             ms.pnl += holding.profitLoss
             delete positionMetas[holding.code]
+            lossCooldown[holding.code] = Date.now()
+            console.log(`[쿨다운] ${holding.name} 손절 후 30분 재진입 차단`)
           }
         }
       }
@@ -572,6 +613,7 @@ const _executeScalpingCycleInner = async (
               if (log.result === 'success') {
                 ms.pnl += holding.profitLoss
                 delete positionMetas[holding.code]
+                lossCooldown[holding.code] = Date.now()
               }
             }
           } else {
@@ -734,6 +776,14 @@ const _executeScalpingCycleInner = async (
       // 이미 실패한 종목은 재시도하지 않음
       if (failedCodes.has(target.code)) continue
 
+      // ★ 손절 쿨다운 체크: 최근 30분 내 손절된 종목은 재진입 차단
+      const lastLoss = lossCooldown[target.code]
+      if (lastLoss && (Date.now() - lastLoss) < LOSS_COOLDOWN_MS) {
+        const remainMin = Math.ceil((LOSS_COOLDOWN_MS - (Date.now() - lastLoss)) / 60000)
+        console.log(`[스캘핑 ${logTime()}] ${target.name} 손절 쿨다운 중 (${remainMin}분 남음) — 재진입 대기`)
+        continue
+      }
+
       // ETF/레버리지/인버스 매수 차단
       if (isETF(target.name)) {
         console.log(`[스캘핑 ${logTime()}] ${target.name} — ETF/레버리지/인버스 매수 차단`)
@@ -790,6 +840,9 @@ const _executeScalpingCycleInner = async (
             firstPartialSold: false,
             atrPercent: target.atrPercent,
             buyTimestamp: Date.now(),
+            priceTarget: target.priceTarget ?? Math.round(target.price * (1 + target.takeProfitPercent / 100)),
+            runnerActive: false,
+            runnerTrailStop: 0,
           }
         } else {
           failedCodes.add(target.code)
@@ -845,6 +898,9 @@ const _executeScalpingCycleInner = async (
               firstPartialSold: prevMeta?.firstPartialSold ?? false,
               atrPercent: target.atrPercent,
               buyTimestamp: prevMeta?.buyTimestamp ?? Date.now(),
+              priceTarget: target.priceTarget ?? prevMeta?.priceTarget ?? 0,
+              runnerActive: prevMeta?.runnerActive ?? false,
+              runnerTrailStop: prevMeta?.runnerTrailStop ?? 0,
             }
           }
         } else {

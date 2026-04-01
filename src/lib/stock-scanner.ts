@@ -108,6 +108,8 @@ export interface ScanResult {
   institutionNetBuy: number // 기관 순매수
   takeProfitPercent: number
   stopLossPercent: number
+  priceTarget: number      // 목표가 절대가격 (저항선 기반)
+  rrRatio: number          // Risk:Reward 비율 (표시용)
   score: number            // 종합 점수 (-100 ~ +100)
   signal: 'BUY' | 'SELL' | 'HOLD'
   reasons: string[]
@@ -291,15 +293,38 @@ const analyzeWithMinuteBars = async (
     score -= 10; reasons.push(`외국인+기관 동반매도`)
   }
 
-  // 익절/손절 — 손절 타이트 + 익절 넓게 (최소 2배)
-  let stopLossPercent = Math.max(0.8, Math.min(1.5, atrPercent * 1.5))  // 손절: 0.8~1.5% (칼손절)
-  let takeProfitPercent = Math.max(stopLossPercent * 2, Math.min(6, atrPercent * 3))  // 익절: 손절의 최소 2배
-  takeProfitPercent = Math.max(takeProfitPercent, spreadCost * 3, 2.0)  // 최소 2%
-  if (score >= 50) { takeProfitPercent *= 1.3 }
-  if (volumeSurge > 3) { takeProfitPercent *= 1.2 }
-  takeProfitPercent = Math.max(takeProfitPercent, stopLossPercent * 2)  // 최종 보장: 손절의 2배
+  // ─── 손절 (ATR 기반, 타이트하게) ───
+  let stopLossPercent = Math.max(0.8, Math.min(1.5, atrPercent * 1.5))
+
+  // ─── 저항선 기반 목표가 계산 ───
+  // 이미 계산된 지표들에서 저항선 추출 (현재가 위에 있는 것만)
+  const swingHigh20 = Math.max(...sorted5.slice(-20).map((b: { high: number }) => b.high))
+  const resistanceLevels = [
+    upper,       // BB 상단 (절대가격)
+    vp.vah,      // Volume Profile Value Area High
+    swingHigh20, // 최근 20봉 고점
+  ].filter(r => r > price * 1.001)  // 현재가보다 0.1% 이상 위인 것만
+
+  const nearestResistance = resistanceLevels.length > 0
+    ? Math.min(...resistanceLevels)
+    : price * 1.03  // 저항선 없으면 3% 기본
+
+  const targetPercent = ((nearestResistance - price) / price) * 100
+
+  // R:R 최소 1.5배: 목표가가 손절의 1.5배 미만이면 매수 신호 제거
+  const rrRatio = targetPercent / stopLossPercent
+  if (rrRatio < 1.5 && score >= 25) {
+    // BUY 신호이지만 R:R 미달 → HOLD로 강등
+    score = Math.min(score, 24)
+    reasons.push(`R:R ${rrRatio.toFixed(1)}배 미달 (목표 ${targetPercent.toFixed(1)}% vs 손절 ${stopLossPercent.toFixed(1)}%)`)
+  }
+
+  let takeProfitPercent = Math.max(targetPercent, stopLossPercent * 2, 2.0)
+  takeProfitPercent = Math.max(takeProfitPercent, spreadCost * 3)
   takeProfitPercent = Math.round(takeProfitPercent * 10) / 10
   stopLossPercent = Math.round(stopLossPercent * 10) / 10
+
+  const priceTarget = Math.round(nearestResistance)
 
   let signal: 'BUY' | 'SELL' | 'HOLD' = 'HOLD'
   if (score >= 25) signal = 'BUY'
@@ -316,7 +341,7 @@ const analyzeWithMinuteBars = async (
     vpPosition: vp.position, spreadCost,
     pattern: pattern.pattern, mtfDirection: mtf.direction,
     foreignNetBuy: foreignNet, institutionNetBuy: instNet,
-    takeProfitPercent, stopLossPercent,
+    takeProfitPercent, stopLossPercent, priceTarget, rrRatio: Math.round(rrRatio * 10) / 10,
     score, signal, reasons, source: 'minute',
   }
 }
@@ -404,15 +429,20 @@ const analyzeWithDailyBars = async (
   // 급락 반등
   if (change < -3 && rsi < 40) { score += 15; reasons.push(`${change.toFixed(1)}% 급락 반등 기대`) }
 
-  // 익절/손절 (일봉 기반) — 손절 타이트 + 익절 넓게 (최소 2배)
-  let stopLossPercent = Math.max(1, Math.min(1.5, atrPercent * 1))  // 손절: 1~1.5%
-  let takeProfitPercent = Math.max(stopLossPercent * 2, Math.min(6, atrPercent * 2))  // 익절: 손절의 최소 2배
-  takeProfitPercent = Math.max(takeProfitPercent, 2.5)  // 최소 2.5%
-  if (score >= 50) { takeProfitPercent *= 1.3 }
-  if (volumeSurge > 2) { takeProfitPercent *= 1.2 }
-  takeProfitPercent = Math.max(takeProfitPercent, stopLossPercent * 2)
+  // 익절/손절 (일봉 기반) — BB 상단을 저항선으로 활용
+  let stopLossPercent = Math.max(1, Math.min(1.5, atrPercent * 1))
+  const bbResistance = upper > price * 1.001 ? upper : price * 1.03
+  const dailyTargetPercent = ((bbResistance - price) / price) * 100
+  const dailyRR = dailyTargetPercent / stopLossPercent
+  if (dailyRR < 1.5 && score >= 25) {
+    score = Math.min(score, 24)
+    reasons.push(`R:R ${dailyRR.toFixed(1)}배 미달`)
+  }
+  let takeProfitPercent = Math.max(dailyTargetPercent, stopLossPercent * 2, 2.5)
   takeProfitPercent = Math.round(takeProfitPercent * 10) / 10
   stopLossPercent = Math.round(stopLossPercent * 10) / 10
+  const priceTarget = Math.round(bbResistance)
+  const rrRatio = Math.round(dailyRR * 10) / 10
 
   let signal: 'BUY' | 'SELL' | 'HOLD' = 'HOLD'
   if (score >= 25) signal = 'BUY'
@@ -428,7 +458,7 @@ const analyzeWithDailyBars = async (
     vpPosition: 0, spreadCost: calcSpreadCost(price),
     pattern: 'none', mtfDirection: 'mixed' as const,
     foreignNetBuy: 0, institutionNetBuy: 0,
-    takeProfitPercent, stopLossPercent,
+    takeProfitPercent, stopLossPercent, priceTarget, rrRatio,
     score, signal, reasons, source: 'daily',
   }
 }
