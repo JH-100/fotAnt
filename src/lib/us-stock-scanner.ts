@@ -177,9 +177,10 @@ const analyzeUSStock = (
   const reasons: string[] = []
 
   // RSI
-  if (rsi < 25) { score += 28; reasons.push(`RSI ${rsi.toFixed(0)} 극과매도`) }
+  if (rsi < 20) { score += 35; reasons.push(`RSI ${rsi.toFixed(0)} 공황 과매도`) }
+  else if (rsi < 25) { score += 28; reasons.push(`RSI ${rsi.toFixed(0)} 극과매도`) }
   else if (rsi < 30) { score += 20; reasons.push(`RSI ${rsi.toFixed(0)} 과매도`) }
-  else if (rsi < 40) { score += 10 }
+  else if (rsi < 40) { score += 12; reasons.push(`RSI ${rsi.toFixed(0)} 약과매도`) }
   else if (rsi > 80) { score -= 25; reasons.push(`RSI ${rsi.toFixed(0)} 극과매수`) }
   else if (rsi > 70) { score -= 15; reasons.push(`RSI ${rsi.toFixed(0)} 과매수`) }
 
@@ -216,13 +217,17 @@ const analyzeUSStock = (
   else if (volSurge >= 2 && change > 0) { score += 10; reasons.push(`거래량 ${volSurge.toFixed(1)}배`) }
   else if (volSurge >= 1.5 && change > 0) { score += 5 }
 
-  // 급락 반등 기대
-  if (change < -3 && rsi < 40) { score += 12; reasons.push(`${change.toFixed(1)}% 급락 반등 기대`) }
+  // 급락 반등 기대 (관세 충격 등 시장 전체 하락 시)
+  if (change < -5 && rsi < 35) { score += 20; reasons.push(`${change.toFixed(1)}% 급락 — 반등 기대`) }
+  else if (change < -3 && rsi < 40) { score += 12; reasons.push(`${change.toFixed(1)}% 급락 반등 기대`) }
 
-  // 시그널
+  // 이평선 역배열이지만 RSI 극과매도 → 역배열 감점 완화 (하락장 과도감점 보정)
+  if (rsi < 35 && latestSma5 < latestSma20) score += 5
+
+  // 시그널 (한국 스캐너와 동일 기준)
   let signal: 'BUY' | 'SELL' | 'HOLD' = 'HOLD'
-  if (score >= 30) signal = 'BUY'
-  else if (score <= -25) signal = 'SELL'
+  if (score >= 25) signal = 'BUY'
+  else if (score <= -20) signal = 'SELL'
 
   return {
     symbol, name, exchange,
