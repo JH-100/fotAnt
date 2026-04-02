@@ -105,11 +105,18 @@ const useAutoTradeStore = create<AutoTradeState>()(
     }),
     {
       name: 'auto-trade-storage',
+      version: 3, // 스키마 변경 시 올리면 localStorage 자동 초기화
       // config + logs만 persist (scanResults, dailyStats는 휘발성)
       partialize: (state) => ({
         config: state.config,
         logs: state.logs.slice(0, 50),
       }),
+      // 역직렬화 실패 시 기본값으로 폴백 (크래시 방지)
+      onRehydrateStorage: () => (state, error) => {
+        if (error) {
+          console.warn('[auto-trade-store] rehydrate 실패, 기본값으로 초기화:', error)
+        }
+      },
     }
   )
 )

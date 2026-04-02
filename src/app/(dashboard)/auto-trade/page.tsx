@@ -8,9 +8,11 @@ import ScanResults from '@/components/auto-trade/ScanResults'
 import TradeLog from '@/components/auto-trade/TradeLog'
 import RiskGauge from '@/components/auto-trade/RiskGauge'
 import MiniChart from '@/components/auto-trade/MiniChart'
+import ErrorBoundary from '@/components/ErrorBoundary'
 
 const AutoTradePage = () => {
   return (
+    <ErrorBoundary>
     <div className="mx-auto max-w-7xl space-y-8 px-4 py-8 sm:px-6 lg:px-8">
       <header className="space-y-2">
         <h1 className="bg-gradient-to-r from-orange-400 via-rose-400 to-violet-400 bg-clip-text text-4xl font-bold tracking-tight text-transparent">
@@ -46,6 +48,7 @@ const AutoTradePage = () => {
         <TradeLog />
       </div>
     </div>
+    </ErrorBoundary>
   )
 }
 
