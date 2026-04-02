@@ -73,9 +73,9 @@ const ScanResults = () => {
                       {item.price.toLocaleString()}원
                     </p>
                     <p className={`font-mono text-[10px] ${
-                      item.change > 0 ? 'text-emerald-400' : item.change < 0 ? 'text-rose-400' : 'text-muted-foreground'
+                      (item.change ?? 0) > 0 ? 'text-emerald-400' : (item.change ?? 0) < 0 ? 'text-rose-400' : 'text-muted-foreground'
                     }`}>
-                      {item.change > 0 ? '+' : ''}{item.change.toFixed(1)}%
+                      {(item.change ?? 0) > 0 ? '+' : ''}{(item.change ?? 0).toFixed(1)}%
                     </p>
                   </div>
                 </div>
@@ -83,8 +83,8 @@ const ScanResults = () => {
                 {/* 봇 판단 — 익절/손절/변동성 */}
                 {item.signal === 'BUY' && (
                   <div className="mt-2 flex items-center gap-3 pl-7 text-[9px]">
-                    <span className="text-muted-foreground">RSI {item.rsi.toFixed(0)}</span>
-                    <span className="text-muted-foreground">변동성 {item.atrPercent.toFixed(1)}%</span>
+                    <span className="text-muted-foreground">RSI {(item.rsi ?? 0).toFixed(0)}</span>
+                    <span className="text-muted-foreground">변동성 {(item.atrPercent ?? 0).toFixed(1)}%</span>
                     <span className="text-emerald-400">🎯 익절 +{item.takeProfitPercent}%</span>
                     <span className="text-rose-400">🛑 손절 -{item.stopLossPercent}%</span>
                   </div>

@@ -57,7 +57,7 @@ const Holdings = () => {
             <p className={`font-mono text-sm font-bold ${totalPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
               {totalPnL >= 0 ? '+' : ''}{totalPnL.toLocaleString()}원
               <span className="ml-1 text-[10px] font-normal">
-                ({totalPnLPercent >= 0 ? '+' : ''}{totalPnLPercent.toFixed(2)}%)
+                ({(totalPnLPercent ?? 0) >= 0 ? '+' : ''}{(totalPnLPercent ?? 0).toFixed(2)}%)
               </span>
             </p>
             <p className="font-mono text-[10px] text-muted-foreground">
@@ -92,7 +92,7 @@ const Holdings = () => {
                       {h.profitLoss >= 0 ? '+' : ''}{h.profitLoss.toLocaleString()}원
                     </span>
                     <span className={`ml-1 font-mono text-[10px] ${h.profitLoss >= 0 ? 'text-emerald-400/70' : 'text-rose-400/70'}`}>
-                      ({h.profitLossPercent >= 0 ? '+' : ''}{h.profitLossPercent.toFixed(2)}%)
+                      ({(h.profitLossPercent ?? 0) >= 0 ? '+' : ''}{(h.profitLossPercent ?? 0).toFixed(2)}%)
                     </span>
                   </div>
                 </div>
