@@ -16,6 +16,7 @@ const AutoTradeControl = () => {
   const [error, setError] = useState('')
   const [lastError, setLastError] = useState<string | null>(null)
   const [startedAt, setStartedAt] = useState<string | null>(null)
+  const [unrealizedPnl, setUnrealizedPnl] = useState(0)
   const [diagnostics, setDiagnostics] = useState<{
     scanCount?: number; buySignals?: number; marketOpen?: boolean;
     lastCycleAt?: string
@@ -46,6 +47,7 @@ const AutoTradeControl = () => {
       // 로컬 상태 (persist 안 함)
       if (data.startedAt) setStartedAt(data.startedAt)
       setLastError(data.lastError)
+      setUnrealizedPnl(data.unrealizedPnl ?? 0)
       setDiagnostics({
         scanCount: data.scan?.length ?? 0,
         buySignals: data.scan?.filter((s: { signal: string }) => s.signal === 'BUY')?.length ?? 0,
@@ -155,11 +157,26 @@ const AutoTradeControl = () => {
           </span>
         </div>
         {(isRunning || dailyStats.orders > 0) && (
-          <div className="flex items-center gap-3 text-xs">
-            <span className="text-muted-foreground">오늘 {dailyStats.orders}건</span>
-            <span className={dailyStats.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
-              {dailyStats.pnl >= 0 ? '+' : ''}{dailyStats.pnl.toLocaleString()}원
-            </span>
+          <div className="flex flex-col items-end gap-0.5 text-xs">
+            <div className="flex items-center gap-3">
+              <span className="text-muted-foreground">오늘 {dailyStats.orders}건</span>
+              {(() => {
+                const total = dailyStats.pnl + unrealizedPnl
+                return (
+                  <span className={total >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                    {total >= 0 ? '+' : ''}{total.toLocaleString()}원
+                  </span>
+                )
+              })()}
+            </div>
+            {unrealizedPnl !== 0 && (
+              <div className="flex gap-2 text-[10px] text-muted-foreground">
+                <span>실현 {dailyStats.pnl >= 0 ? '+' : ''}{dailyStats.pnl.toLocaleString()}</span>
+                <span className={unrealizedPnl >= 0 ? 'text-emerald-400/60' : 'text-rose-400/60'}>
+                  보유 {unrealizedPnl >= 0 ? '+' : ''}{unrealizedPnl.toLocaleString()}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>

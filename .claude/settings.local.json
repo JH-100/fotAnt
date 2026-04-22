@@ -103,7 +103,17 @@
       "Bash(find /c/ceJava/htdocs/forAnt/src -name *cache* -o -name *Cache*)",
       "Bash(ls C:/ceJava/htdocs/forAnt/src/app/\\\\\\(dashboard\\\\\\)/us-stocks/)",
       "Bash(powershell -Command \"Get-WmiObject Win32_Process -Filter \"\"Name=''''node.exe''''\"\" | Where-Object { $_CommandLine -like ''''*next*start*'''' } | ForEach-Object { Stop-Process -Id $_ProcessId -Force }\")",
-      "Bash(git pull:*)"
+      "Bash(git pull:*)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :3000)",
+      "Bash(findstr \"LISTENING\")",
+      "Bash(Get-Content C:\\\\ceJava\\\\htdocs\\\\forAnt\\\\.scalping-stats.json -Encoding UTF8)",
+      "Bash(node -e ':*)",
+      "Bash(powershell *)",
+      "Bash(node node_modules/next/dist/bin/next start -p 3456)",
+      "Bash(echo \"started PID $!\")",
+      "Bash(echo \"PID $!\")",
+      "Bash(curl -s http://localhost:3456/api/auto-trade)"
     ]
   }
 }

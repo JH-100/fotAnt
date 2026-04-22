@@ -111,6 +111,14 @@ const useAutoTradeStore = create<AutoTradeState>()(
         config: state.config,
         logs: state.logs.slice(0, 50),
       }),
+      // 버전 업그레이드 시 이전 config 보존 (기본값 위에 덮어씌움)
+      migrate: (persistedState: unknown) => {
+        const s = persistedState as Partial<AutoTradeState>
+        return {
+          ...s,
+          config: { ...DEFAULT_SCALPING, ...(s.config ?? {}) },
+        }
+      },
       // 역직렬화 실패 시 기본값으로 폴백 (크래시 방지)
       onRehydrateStorage: () => (state, error) => {
         if (error) {

@@ -14,6 +14,12 @@ import {
 } from './indicators'
 import type { MinutePrice, DailyPrice } from '@/types/kis'
 
+// 왕복 거래비용 (%): 매수수수료(0.015%) + 매도수수료(0.015%) + 매도세(0.18%) + 슬리피지(0.3%) = 약 0.5%
+// BUY 신호의 목표가가 이걸 못 넘으면 실제로는 손실
+const ROUND_TRIP_COST_PCT = 0.5
+// BUY 최소 점수 (승률 8% 사태 방지) — 기존 25점은 약한 신호 매수 유발
+const MIN_BUY_SCORE = 40
+
 const logTime = () => {
   const d = new Date()
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -313,13 +319,20 @@ const analyzeWithMinuteBars = async (
 
   // R:R 최소 1.5배: 목표가가 손절의 1.5배 미만이면 매수 신호 제거
   const rrRatio = targetPercent / stopLossPercent
-  if (rrRatio < 1.5 && score >= 25) {
+  if (rrRatio < 1.5 && score >= MIN_BUY_SCORE) {
     // BUY 신호이지만 R:R 미달 → HOLD로 강등
-    score = Math.min(score, 24)
+    score = Math.min(score, MIN_BUY_SCORE - 1)
     reasons.push(`R:R ${rrRatio.toFixed(1)}배 미달 (목표 ${targetPercent.toFixed(1)}% vs 손절 ${stopLossPercent.toFixed(1)}%)`)
   }
 
-  let takeProfitPercent = Math.max(targetPercent, stopLossPercent * 2, 2.0)
+  // 왕복 거래비용 반영: 수수료/세금 커버 못하면 BUY 자격 박탈
+  if (targetPercent < ROUND_TRIP_COST_PCT + 1.0 && score >= MIN_BUY_SCORE) {
+    score = Math.min(score, MIN_BUY_SCORE - 1)
+    reasons.push(`목표가 ${targetPercent.toFixed(1)}% < 거래비용+1% (${(ROUND_TRIP_COST_PCT + 1.0).toFixed(1)}%)`)
+  }
+
+  // 목표가에 거래비용 마진 추가 (실수익 확보)
+  let takeProfitPercent = Math.max(targetPercent, stopLossPercent * 2, 2.0) + ROUND_TRIP_COST_PCT
   takeProfitPercent = Math.max(takeProfitPercent, spreadCost * 3)
   takeProfitPercent = Math.round(takeProfitPercent * 10) / 10
   stopLossPercent = Math.round(stopLossPercent * 10) / 10
@@ -327,8 +340,20 @@ const analyzeWithMinuteBars = async (
   const priceTarget = Math.round(nearestResistance)
 
   let signal: 'BUY' | 'SELL' | 'HOLD' = 'HOLD'
-  if (score >= 25) signal = 'BUY'
+  if (score >= MIN_BUY_SCORE) signal = 'BUY'
   else if (score <= -20) signal = 'SELL'
+
+  // ★ 학습 기반 필터: 소형주/유동성 부족 종목 BUY 차단
+  // 근거: 이루온(-3.6%, 3분), 진영(-4.4%, 9분) 등 ATR 높은 소형주가 순간 갭 하락
+  if (signal === 'BUY' && atrPercent > 3.0) {
+    signal = 'HOLD'
+    reasons.push(`ATR ${atrPercent.toFixed(1)}% 과다 — 소형주 갭 하락 위험`)
+  }
+  // 근거: 세림B&G, 대영포장 등 스프레드 높은 종목은 진입 즉시 손실
+  if (signal === 'BUY' && spreadCost >= 0.5) {
+    signal = 'HOLD'
+    reasons.push(`스프레드 ${spreadCost.toFixed(2)}% 과다 — 유동성 부족`)
+  }
 
   return {
     code, name, price, change,
@@ -434,19 +459,30 @@ const analyzeWithDailyBars = async (
   const bbResistance = upper > price * 1.001 ? upper : price * 1.03
   const dailyTargetPercent = ((bbResistance - price) / price) * 100
   const dailyRR = dailyTargetPercent / stopLossPercent
-  if (dailyRR < 1.5 && score >= 25) {
-    score = Math.min(score, 24)
+  if (dailyRR < 1.5 && score >= MIN_BUY_SCORE) {
+    score = Math.min(score, MIN_BUY_SCORE - 1)
     reasons.push(`R:R ${dailyRR.toFixed(1)}배 미달`)
   }
-  let takeProfitPercent = Math.max(dailyTargetPercent, stopLossPercent * 2, 2.5)
+  // 거래비용 커버 못하는 목표가는 BUY 박탈
+  if (dailyTargetPercent < ROUND_TRIP_COST_PCT + 1.0 && score >= MIN_BUY_SCORE) {
+    score = Math.min(score, MIN_BUY_SCORE - 1)
+    reasons.push(`목표가 ${dailyTargetPercent.toFixed(1)}% < 거래비용+1%`)
+  }
+  let takeProfitPercent = Math.max(dailyTargetPercent, stopLossPercent * 2, 2.5) + ROUND_TRIP_COST_PCT
   takeProfitPercent = Math.round(takeProfitPercent * 10) / 10
   stopLossPercent = Math.round(stopLossPercent * 10) / 10
   const priceTarget = Math.round(bbResistance)
   const rrRatio = Math.round(dailyRR * 10) / 10
 
   let signal: 'BUY' | 'SELL' | 'HOLD' = 'HOLD'
-  if (score >= 25) signal = 'BUY'
+  if (score >= MIN_BUY_SCORE) signal = 'BUY'
   else if (score <= -20) signal = 'SELL'
+
+  // ★ 학습 기반 필터 (일봉): 소형주/유동성 부족 BUY 차단
+  if (signal === 'BUY' && atrPercent > 3.0) {
+    signal = 'HOLD'
+    reasons.push(`ATR ${atrPercent.toFixed(1)}% 과다 — 소형주 갭 하락 위험`)
+  }
 
   return {
     code, name, price, change,
@@ -460,6 +496,153 @@ const analyzeWithDailyBars = async (
     foreignNetBuy: 0, institutionNetBuy: 0,
     takeProfitPercent, stopLossPercent, priceTarget, rrRatio,
     score, signal, reasons, source: 'daily',
+  }
+}
+
+// ════════════════════════════════════════════════════
+// 추세추종 일봉 분석 (Trend Following)
+// ════════════════════════════════════════════════════
+
+/** 추세추종 일봉 분석 — 이평선 정배열 + 모멘텀 + 거래량 확장 */
+export const analyzeTrendDaily = async (
+  code: string, name: string, price: number, change: number, mode?: TradingMode
+): Promise<ScanResult | null> => {
+  const data = await getCachedDailyPrices(code, 80, mode)  // 60일선 계산을 위해 80일 필요
+  if (data.length < 30) return null
+
+  const closes = data.map(d => d.close)
+  const volumes = data.map(d => d.volume)
+  const highs = data.map(d => d.high)
+
+  // 이평선 (5/20/60)
+  const sma5Arr = calcSMA(closes, 5)
+  const sma20Arr = calcSMA(closes, 20)
+  const sma60Arr = calcSMA(closes, 60)
+  const sma5 = sma5Arr[sma5Arr.length - 1] ?? 0
+  const sma20 = sma20Arr[sma20Arr.length - 1] ?? 0
+  const sma60 = sma60Arr[sma60Arr.length - 1] ?? 0
+  const sma20Prev7 = sma20Arr[sma20Arr.length - 8] ?? 0  // 7일 전 20일선 (기울기 확인)
+
+  // MACD (12,26,9) — 추세추종 표준 파라미터
+  const { histogram, macd, signal } = calcMACD(closes, 12, 26, 9)
+  const macdHist = histogram[histogram.length - 1] ?? 0
+  const macdPrev = histogram[histogram.length - 2] ?? 0
+  const macdLine = macd[macd.length - 1] ?? 0
+  const signalLine = signal[signal.length - 1] ?? 0
+
+  // RSI(14) 표준
+  const rsiArr = calcRSI(closes, 14)
+  const rsi = rsiArr[rsiArr.length - 1] ?? 50
+
+  // 거래량 (최근 5일 평균 vs 20일 평균)
+  const recentVolAvg = volumes.slice(-5).reduce((a, b) => a + b, 0) / 5
+  const longVolAvg = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20
+  const volumeExpansion = longVolAvg > 0 ? recentVolAvg / longVolAvg : 1
+
+  // 20일 신고가 근접도
+  const high20 = Math.max(...highs.slice(-20))
+  const near20High = price / high20  // 1.0이면 20일 신고가
+
+  // ATR (변동성)
+  const atrArr = calcATR(data, 14)
+  const atr = atrArr[atrArr.length - 1] ?? 0
+  const atrPercent = price > 0 ? (atr / price) * 100 : 2
+
+  let score = 0
+  const reasons: string[] = []
+
+  // ── 1) 정배열 (price > SMA5 > SMA20 > SMA60) ──
+  const priceAboveAll = price > sma5 && sma5 > sma20 && sma20 > sma60
+  const priceAbove20_60 = price > sma20 && sma20 > sma60  // 약한 정배열
+  if (priceAboveAll) {
+    score += 30; reasons.push('완전 정배열 (가격>5>20>60일선)')
+  } else if (priceAbove20_60) {
+    score += 15; reasons.push('약정배열 (20>60일선)')
+  } else if (price < sma60) {
+    score -= 20; reasons.push('하락 추세 (60일선 아래)')
+  }
+
+  // ── 2) 20일선 상승 기울기 ──
+  const sma20Slope = sma20Prev7 > 0 ? ((sma20 - sma20Prev7) / sma20Prev7) * 100 : 0
+  if (sma20Slope > 2) {
+    score += 15; reasons.push(`20일선 상승 기울기 ${sma20Slope.toFixed(1)}%`)
+  } else if (sma20Slope > 0.5) {
+    score += 8
+  } else if (sma20Slope < -1) {
+    score -= 10; reasons.push('20일선 하락 기울기')
+  }
+
+  // ── 3) MACD ──
+  if (macdHist > 0 && macdHist > macdPrev && macdLine > signalLine) {
+    score += 20; reasons.push('MACD 상승 추세')
+  } else if (macdHist > 0 && macdPrev <= 0) {
+    score += 25; reasons.push('MACD 골든크로스 (신규)')
+  } else if (macdHist < 0) {
+    score -= 8
+  }
+
+  // ── 4) RSI: 50~70이 건강한 추세 ──
+  if (rsi >= 50 && rsi <= 70) {
+    score += 15; reasons.push(`RSI ${rsi.toFixed(0)} 건강 추세`)
+  } else if (rsi > 70 && rsi <= 80) {
+    score += 5  // 강한 추세지만 과매수 경계
+  } else if (rsi > 80) {
+    score -= 15; reasons.push(`RSI ${rsi.toFixed(0)} 과매수`)
+  } else if (rsi < 40) {
+    score -= 10; reasons.push(`RSI ${rsi.toFixed(0)} 약세`)
+  }
+
+  // ── 5) 거래량 확장 ──
+  if (volumeExpansion >= 1.5) {
+    score += 15; reasons.push(`거래량 확장 ${volumeExpansion.toFixed(1)}배`)
+  } else if (volumeExpansion >= 1.2) {
+    score += 8
+  } else if (volumeExpansion < 0.7) {
+    score -= 8; reasons.push('거래량 위축')
+  }
+
+  // ── 6) 20일 신고가 근접 ──
+  if (near20High >= 0.98) {
+    score += 15; reasons.push('20일 신고가 돌파권')
+  } else if (near20High >= 0.95) {
+    score += 8
+  }
+
+  // ── 7) 눌림목 매수 찬스 (20일선 부근 + MACD 상승) ──
+  const nearSMA20 = Math.abs(price - sma20) / sma20 < 0.03  // 20일선 ±3%
+  if (nearSMA20 && priceAboveAll && macdHist > macdPrev) {
+    score += 15; reasons.push('20일선 눌림목 매수')
+  }
+
+  // ── 페널티: ATR 과다 (변동성 높음) ──
+  if (atrPercent > 5) {
+    score -= 15; reasons.push(`ATR ${atrPercent.toFixed(1)}% 변동성 과다`)
+  }
+
+  // 손절/익절: trend 모드는 trailing stop + 하드 스탑
+  const stopLossPercent = 7.0   // 하드 스탑 -7% (넓게)
+  const takeProfitPercent = 15.0 // 참고값 (실제는 trailing으로 청산)
+  const priceTarget = Math.round(price * 1.15)  // 참고용 목표가 +15%
+
+  let signal_: 'BUY' | 'SELL' | 'HOLD' = 'HOLD'
+  if (score >= 60) signal_ = 'BUY'
+  else if (score <= -30) signal_ = 'SELL'
+
+  return {
+    code, name, price, change,
+    volume: volumes[volumes.length - 1] ?? 0,
+    volumeSurge: volumeExpansion,
+    rsi, macdHist, macdPrevHist: macdPrev,
+    bbPosition: 0.5,
+    vwap: 0, vwapDiff: 0, buySellRatio: 1,
+    momentum: sma20Slope,
+    atr, atrPercent,
+    williamsR: -50, squeeze: false, squeezeRelease: 'neutral' as const,
+    vpPosition: 0, spreadCost: calcSpreadCost(price),
+    pattern: 'none', mtfDirection: priceAboveAll ? 'bullish' : 'mixed' as const,
+    foreignNetBuy: 0, institutionNetBuy: 0,
+    takeProfitPercent, stopLossPercent, priceTarget, rrRatio: 2.0,
+    score, signal: signal_, reasons, source: 'daily',
   }
 }
 
@@ -690,7 +873,7 @@ const getAIRecommendations = async (
 // ════════════════════════════════════════════════════
 
 /** 시장 전체 스캔 — KIS 거래량순위 + AI추천 + 분봉/일봉 분석 */
-export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
+export const scanMarket = async (mode?: TradingMode, tradingMode: 'scalping' | 'trend' = 'scalping'): Promise<ScanResult[]> => {
   // 1. KIS 거래량 순위 — ETF 제외 + 사전 필터링 (급락/과열/저유동성 제외)
   let trending: { code: string; name: string; price: number; change: number }[]
   try {
@@ -782,9 +965,10 @@ export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
     return []
   }
 
-  console.log(`[스캐너 ${logTime()}] 총 ${trending.length}종목 분석 시작 (거래량${trending.length - aiCount} + AI${aiCount})`)
+  const modeLabel = tradingMode === 'trend' ? '추세추종(일봉)' : '스캘핑(분봉)'
+  console.log(`[스캐너 ${logTime()}] 총 ${trending.length}종목 ${modeLabel} 분석 시작 (거래량${trending.length - aiCount} + AI${aiCount})`)
 
-  // 3. 병렬 분석 (분봉 우선 → 일봉 폴백, 5개씩 배치 + 캐시 활용)
+  // 3. 병렬 분석 — trend 모드는 일봉만, scalping은 분봉 우선 → 일봉 폴백
   const results: ScanResult[] = []
   let failCount = 0
   let minuteCount = 0
@@ -794,8 +978,9 @@ export const scanMarket = async (mode?: TradingMode): Promise<ScanResult[]> => {
 
   for (let i = 0; i < trending.length; i += batchSize) {
     const batch = trending.slice(i, i + batchSize)
+    const analyzer = tradingMode === 'trend' ? analyzeTrendDaily : analyzeStock
     const batchResults = await Promise.allSettled(
-      batch.map((s) => analyzeStock(s.code, s.name, s.price, s.change, mode))
+      batch.map((s) => analyzer(s.code, s.name, s.price, s.change, mode))
     )
     for (const r of batchResults) {
       if (r.status === 'fulfilled' && r.value) {

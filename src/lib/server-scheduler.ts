@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import {
   executeScalpingCycle, isMarketOpen, getScalpingLogs, getLastScan, getDailyStats,
-  restoreLogs, restoreStats, resetDailyStats,
+  restoreLogs, restoreStats, resetDailyStats, DEFAULT_SCALPING,
 } from './scalping-engine'
 import { getKisBalance } from './kis-api'
 import type { ScalpingConfig } from './scalping-engine'
@@ -67,15 +67,7 @@ interface SchedulerState {
 
 const state: SchedulerState = {
   isRunning: false,
-  config: {
-    budget: 500000,
-    maxPerTrade: 100000,
-    maxPositions: 5,
-    maxDailyOrders: 20,
-    minScore: 25,
-    mode: 'mock',
-    riskLevel: 'normal',
-  },
+  config: { ...DEFAULT_SCALPING },
   intervalId: null,
   lastError: null,
   startedAt: null,
@@ -83,7 +75,9 @@ const state: SchedulerState = {
   cycleCount: 0,
 }
 
-const INTERVAL_MS = 3 * 60 * 1000 // 3분
+const SCALPING_INTERVAL_MS = 3 * 60 * 1000   // 스캘핑: 3분
+const TREND_INTERVAL_MS = 30 * 60 * 1000     // 추세추종: 30분 (일봉 기반, 자주 볼 필요 없음)
+const getInterval = () => state.config.tradingMode === 'trend' ? TREND_INTERVAL_MS : SCALPING_INTERVAL_MS
 
 /** 1사이클 실행 */
 const runCycle = async () => {
@@ -161,10 +155,12 @@ export const startScheduler = (config?: Partial<ScalpingConfig>) => {
   state.lastCycleAt = null
   state.cycleCount = 0
 
-  console.log(`[스캘핑 ${logTime()}] 스케줄러 시작 (${state.config.mode} 모드, ${INTERVAL_MS / 1000}초 간격)`)
+  const interval = getInterval()
+  const strategyLabel = state.config.tradingMode === 'trend' ? '추세추종' : '스캘핑'
+  console.log(`[스케줄러 ${logTime()}] 시작 — ${strategyLabel} / ${state.config.mode} 모드 / ${interval / 1000}초 간격`)
 
   runCycle()
-  state.intervalId = setInterval(runCycle, INTERVAL_MS)
+  state.intervalId = setInterval(runCycle, interval)
 }
 
 /** 스케줄러 중지 */
@@ -197,6 +193,7 @@ export const getSchedulerStatus = () => {
     marketOpen: isMarketOpen(),
     dailyStats: getDailyStats(),
     holdings: lastHoldings,
+    unrealizedPnl: lastHoldings.reduce((s, h) => s + (h.profitLoss ?? 0), 0),
   }
 }
 

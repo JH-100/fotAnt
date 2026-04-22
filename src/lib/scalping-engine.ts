@@ -22,25 +22,41 @@ const isETF = (name: string): boolean =>
   ETF_PREFIXES.some(p => name.startsWith(p)) || name.includes('레버리지') || name.includes('인버스')
 
 export type RiskLevel = 'normal' | 'aggressive'
+export type TradingMode2 = 'scalping' | 'trend'  // 스캘핑(초단타) / 추세추종(중기)
 
 export interface ScalpingConfig {
   budget: number              // 총 투자 한도 (원)
   maxPerTrade: number         // 건당 최대 금액 (원)
   maxPositions: number        // 동시 보유 종목 수
   maxDailyOrders: number      // 일일 최대 주문
-  minScore: number            // 최소 매수 점수 (기본 25)
+  minScore: number            // 최소 매수 점수
   mode: TradingMode           // 실전/모의
   riskLevel: RiskLevel        // 위험도 (normal/aggressive)
+  tradingMode?: TradingMode2  // 'scalping' | 'trend' (기본 trend — 상승장 적합)
 }
+
+// 왕복 거래비용 (%) — 매수수수료 + 매도수수료 + 매도세(0.18%) + 슬리피지
+// 목표가/손절가 판정 시 이 마진을 반드시 넘어야 실제 수익 가능
+export const ROUND_TRIP_COST_PCT = 0.5
 
 export const DEFAULT_SCALPING: ScalpingConfig = {
   budget: 500000,
   maxPerTrade: 100000,
-  maxPositions: 5,
-  maxDailyOrders: 20,
-  minScore: 25,
+  maxPositions: 3,      // 5→3: 집중 + 수수료 절감
+  maxDailyOrders: 20,   // 50→20: 과매매 방지
+  minScore: 40,         // 25→40: 약한 신호 매수 차단 (승률 8% 사태 방지)
   mode: 'mock',
   riskLevel: 'normal',
+  tradingMode: 'trend', // 기본: 추세추종 (상승장에서 스캘핑은 마찰비용만 발생)
+}
+
+// 추세추종 모드 전용 기본값 (일봉 기반, 중기 보유)
+export const DEFAULT_TREND: Partial<ScalpingConfig> = {
+  maxPositions: 2,      // 집중 투자 (2종목)
+  maxPerTrade: 300000,  // 1종목당 최대 30만원
+  maxDailyOrders: 5,    // 추세는 빈번한 매매 불필요
+  minScore: 60,         // 확신 있는 신호만
+  tradingMode: 'trend',
 }
 
 // ─── 포지션별 익절/손절 기준 (매수 시 스캔결과에서 저장) ──
@@ -457,8 +473,75 @@ const _executeScalpingCycleInner = async (
   // 1. 잔고 조회 (실패해도 스캔은 계속)
   const balance = await getBalanceSafe(config.mode)
 
-  // 2. 보유종목 → 트레일링 스탑 + 분할 익절 + 동적 익절/손절
-  if (balance) {
+  // ─── 추세추종 모드 전용 청산 로직 ───
+  const isTrendMode = config.tradingMode === 'trend'
+  if (isTrendMode && balance) {
+    for (const holding of balance.holdings) {
+      if (holding.quantity <= 0) continue
+      if (ms.orderCount >= config.maxDailyOrders) break
+
+      const pnlPercent = holding.profitLossPercent
+      const meta = positionMetas[holding.code]
+
+      // 매수 메타가 없으면 현재가 기준으로 초기화 (수동 매수/재시작 후 대응)
+      if (!meta) {
+        positionMetas[holding.code] = {
+          takeProfitPercent: 15, stopLossPercent: 7,
+          buyScore: 0, buyReasons: [],
+          highWaterMark: Math.max(holding.currentPrice, holding.avgPrice),
+          buyPrice: holding.avgPrice,
+          firstPartialSold: false, atrPercent: 2,
+          buyTimestamp: Date.now(),
+          priceTarget: 0, runnerActive: false, runnerTrailStop: 0,
+        }
+      }
+      const m = positionMetas[holding.code]!
+
+      // 최고가 갱신 (trailing stop용)
+      if (holding.currentPrice > m.highWaterMark) m.highWaterMark = holding.currentPrice
+
+      // 1) 하드 손절: -7% 넘으면 강제 청산
+      if (pnlPercent <= -7.0) {
+        console.log(`[추세 ${logTime()}] ${holding.name} 하드 손절 ${pnlPercent.toFixed(1)}%`)
+        const log = await executeSell(
+          holding.code, holding.name, holding.quantity, holding.currentPrice,
+          `🛑 추세 하드손절 ${pnlPercent.toFixed(1)}% (-7% 한도)`, config
+        )
+        if (log) { newLogs.push(log); if (log.result === 'success') { ms.pnl += holding.profitLoss; delete positionMetas[holding.code]; lossCooldown[holding.code] = Date.now() } }
+        continue
+      }
+
+      // 2) Trailing Stop: 최고가 대비 -5% 하락 시 청산 (추세 종료 신호)
+      //    단, 매수가보다 +3% 이상 올랐을 때만 trailing 작동 (노이즈 필터)
+      const peakGain = ((m.highWaterMark - m.buyPrice) / m.buyPrice) * 100
+      const drawdownFromPeak = m.highWaterMark > 0
+        ? ((m.highWaterMark - holding.currentPrice) / m.highWaterMark) * 100 : 0
+      if (peakGain >= 3.0 && drawdownFromPeak >= 5.0) {
+        console.log(`[추세 ${logTime()}] ${holding.name} 트레일링 스탑 — 최고 +${peakGain.toFixed(1)}% → 현재 +${pnlPercent.toFixed(1)}% (고점대비 -${drawdownFromPeak.toFixed(1)}%)`)
+        const log = await executeSell(
+          holding.code, holding.name, holding.quantity, holding.currentPrice,
+          `📉 추세 트레일링 스탑 — 최고 +${peakGain.toFixed(1)}%에서 -${drawdownFromPeak.toFixed(1)}%`, config
+        )
+        if (log) { newLogs.push(log); if (log.result === 'success') { ms.pnl += holding.profitLoss; delete positionMetas[holding.code] } }
+        continue
+      }
+
+      // 3) 큰 수익 확보 (+20% 이상 + 고점대비 -3%)
+      if (peakGain >= 20 && drawdownFromPeak >= 3.0) {
+        const log = await executeSell(
+          holding.code, holding.name, holding.quantity, holding.currentPrice,
+          `💰 추세 대박 확보 +${pnlPercent.toFixed(1)}% (고점 +${peakGain.toFixed(1)}%에서 -${drawdownFromPeak.toFixed(1)}%)`, config
+        )
+        if (log) { newLogs.push(log); if (log.result === 'success') { ms.pnl += holding.profitLoss; delete positionMetas[holding.code] } }
+        continue
+      }
+
+      // 그 외: 홀드 (추세 지속 시 수익 극대화)
+    }
+  }
+
+  // 2. 보유종목 → 트레일링 스탑 + 분할 익절 + 동적 익절/손절 (스캘핑 모드 전용)
+  if (!isTrendMode && balance) {
     for (const holding of balance.holdings) {
       if (ms.orderCount >= config.maxDailyOrders) break
       if (holding.quantity <= 0) continue
@@ -625,7 +708,7 @@ const _executeScalpingCycleInner = async (
   }
 
   // 3. 시장 스캔 — 매수 기회 탐색
-  const scanResults = await scanMarket(config.mode)
+  const scanResults = await scanMarket(config.mode, config.tradingMode ?? 'scalping')
   lastScanResults = scanResults
 
   // 4. 매수 실행 (잔고 조회 필요)
@@ -668,18 +751,28 @@ const _executeScalpingCycleInner = async (
     console.log(`[스캘핑 ${logTime()}] 보수적 모드 매수 제한 — 최소점수 ${effectiveMinScore}, 건당 ${effectiveMaxPerTrade.toLocaleString()}원, 최대 ${effectiveMaxPositions}종목`)
   }
 
-  // ★ 마감 30분: 보유 포지션 수익 중이면 익절 우선
+  // ★ 마감 30분: 손실/소폭수익 청산, 충분한 수익은 보유 (갭 상승 기회 유지)
+  // - 손실 중 or 수익 1% 미만: 강제 청산 (갭 하락 위험 > 갭 상승 기대)
+  // - 수익 1% 이상: 보유 유지 (모멘텀 있는 종목, 갭 상승 가능)
   if (isClosingPeriod() && balance) {
     for (const holding of balance.holdings) {
       if (holding.quantity <= 0 || ms.orderCount >= config.maxDailyOrders) continue
-      if (holding.profitLossPercent > 0.3) {
-        console.log(`[스캘핑 ${logTime()}] 장마감임박 — ${holding.name} 수익 ${holding.profitLossPercent.toFixed(1)}% → 마감 익절`)
-        const log = await executeSell(
-          holding.code, holding.name, holding.quantity, holding.currentPrice,
-          `⏰ 장마감 익절 ${holding.profitLossPercent.toFixed(1)}%`, config
-        )
-        if (log) { newLogs.push(log); if (log.result === 'success') { ms.pnl += holding.profitLoss; delete positionMetas[holding.code] } }
+      const pct = holding.profitLossPercent
+      if (pct >= 1.0) {
+        // 충분한 수익 → 보유 (갭 상승 시 추가 수익)
+        console.log(`[스캘핑 ${logTime()}] 장마감임박 — ${holding.name} +${pct.toFixed(1)}% 수익 보유 유지 (갭 상승 대기)`)
+        continue
       }
+      // 손실 or 소폭수익(<1%): 청산 — 수수료 고려 시 본전이하, 갭 하락 리스크 불필요
+      const reason = pct >= 0
+        ? `⏰ 장마감 청산 +${pct.toFixed(1)}% (수수료 미만, 갭 리스크 제거)`
+        : `⏰ 장마감 손실 청산 ${pct.toFixed(1)}% (오버나이트 갭 하락 방지)`
+      console.log(`[스캘핑 ${logTime()}] 장마감임박 — ${holding.name} ${pct.toFixed(1)}% → 청산`)
+      const log = await executeSell(
+        holding.code, holding.name, holding.quantity, holding.currentPrice,
+        reason, config
+      )
+      if (log) { newLogs.push(log); if (log.result === 'success') { ms.pnl += holding.profitLoss; delete positionMetas[holding.code] } }
     }
   }
 
