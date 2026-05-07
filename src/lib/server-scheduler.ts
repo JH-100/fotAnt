@@ -76,7 +76,7 @@ const state: SchedulerState = {
 }
 
 const SCALPING_INTERVAL_MS = 3 * 60 * 1000   // 스캘핑: 3분
-const TREND_INTERVAL_MS = 30 * 60 * 1000     // 추세추종: 30분 (일봉 기반, 자주 볼 필요 없음)
+const TREND_INTERVAL_MS = 10 * 60 * 1000     // 추세추종: 10분 (청산 반응 속도 확보)
 const getInterval = () => state.config.tradingMode === 'trend' ? TREND_INTERVAL_MS : SCALPING_INTERVAL_MS
 
 /** 1사이클 실행 */

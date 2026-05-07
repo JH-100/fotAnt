@@ -47,7 +47,7 @@ export const DEFAULT_SCALPING: ScalpingConfig = {
   minScore: 40,         // 25→40: 약한 신호 매수 차단 (승률 8% 사태 방지)
   mode: 'mock',
   riskLevel: 'normal',
-  tradingMode: 'trend', // 기본: 추세추종 (상승장에서 스캘핑은 마찰비용만 발생)
+  tradingMode: 'scalping', // 기본: 스캘핑 (분봉 기반, 3분 사이클, -3% 하드스탑)
 }
 
 // 추세추종 모드 전용 기본값 (일봉 기반, 중기 보유)
@@ -75,6 +75,8 @@ interface PositionMeta {
   priceTarget: number       // 1차 목표가 절대가격 (저항선 기반)
   runnerActive: boolean     // 러너 모드 진행 중
   runnerTrailStop: number   // 러너 트레일링 스탑 가격
+  // 추세 모드 전용
+  ma5: number               // 매수 시점 5일선 (추세 청산 판단용, 주기적 갱신)
 }
 const positionMetas: Record<string, PositionMeta> = {}
 
@@ -492,7 +494,7 @@ const _executeScalpingCycleInner = async (
           buyPrice: holding.avgPrice,
           firstPartialSold: false, atrPercent: 2,
           buyTimestamp: Date.now(),
-          priceTarget: 0, runnerActive: false, runnerTrailStop: 0,
+          priceTarget: 0, runnerActive: false, runnerTrailStop: 0, ma5: 0,
         }
       }
       const m = positionMetas[holding.code]!
@@ -511,7 +513,20 @@ const _executeScalpingCycleInner = async (
         continue
       }
 
-      // 2) Trailing Stop: 최고가 대비 -5% 하락 시 청산 (추세 종료 신호)
+      // 2) 5일선 이탈 청산: 매수 후 수익 났다가 5일선 아래로 떨어지면 추세 종료
+      //    (매수가 기준 -2% 이상 수익 경험 후 현재 5일선 하회 시만 적용 — 노이즈 필터)
+      if (m.highWaterMark > m.buyPrice * 1.02 && m.ma5 > 0 && holding.currentPrice < m.ma5) {
+        const ma5Pct = ((holding.currentPrice - m.ma5) / m.ma5 * 100).toFixed(1)
+        console.log(`[추세 ${logTime()}] ${holding.name} 5일선 이탈 — 현재가 ${holding.currentPrice.toLocaleString()} < 5일선 ${m.ma5.toLocaleString()} (${ma5Pct}%) → 추세 종료`)
+        const log = await executeSell(
+          holding.code, holding.name, holding.quantity, holding.currentPrice,
+          `📊 추세 종료 — 5일선(${m.ma5.toLocaleString()}원) 이탈 ${ma5Pct}%`, config
+        )
+        if (log) { newLogs.push(log); if (log.result === 'success') { ms.pnl += holding.profitLoss; delete positionMetas[holding.code]; lossCooldown[holding.code] = Date.now() } }
+        continue
+      }
+
+      // 3) Trailing Stop: 최고가 대비 -5% 하락 시 청산 (추세 종료 신호)
       //    단, 매수가보다 +3% 이상 올랐을 때만 trailing 작동 (노이즈 필터)
       const peakGain = ((m.highWaterMark - m.buyPrice) / m.buyPrice) * 100
       const drawdownFromPeak = m.highWaterMark > 0
@@ -751,10 +766,8 @@ const _executeScalpingCycleInner = async (
     console.log(`[스캘핑 ${logTime()}] 보수적 모드 매수 제한 — 최소점수 ${effectiveMinScore}, 건당 ${effectiveMaxPerTrade.toLocaleString()}원, 최대 ${effectiveMaxPositions}종목`)
   }
 
-  // ★ 마감 30분: 손실/소폭수익 청산, 충분한 수익은 보유 (갭 상승 기회 유지)
-  // - 손실 중 or 수익 1% 미만: 강제 청산 (갭 하락 위험 > 갭 상승 기대)
-  // - 수익 1% 이상: 보유 유지 (모멘텀 있는 종목, 갭 상승 가능)
-  if (isClosingPeriod() && balance) {
+  // ★ 마감 30분: 스캘핑 모드만 적용 — 추세 모드는 오버나이트 보유가 전략의 핵심
+  if (!isTrendMode && isClosingPeriod() && balance) {
     for (const holding of balance.holdings) {
       if (holding.quantity <= 0 || ms.orderCount >= config.maxDailyOrders) continue
       const pct = holding.profitLossPercent
@@ -897,12 +910,23 @@ const _executeScalpingCycleInner = async (
       }
 
       // ★ ATR 기반 포지션 사이징: 변동성 큰 종목은 투자금 축소
-      // riskAmount = budget * 1% → positionSize = riskAmount / atrPercent
-      const riskBudget = config.budget * 0.01
-      const atrAdjustedMax = target.atrPercent > 0
-        ? Math.min(effectiveMaxPerTrade, riskBudget / (target.atrPercent / 100))
-        : effectiveMaxPerTrade
-      const investAmount = Math.min(atrAdjustedMax, freshCash * 0.5)
+      // ★ 점수 기반 포지션 사이징 (추세 모드: 고확신일수록 더 투자)
+      // 스캘핑 모드: 기존 maxPerTrade 상한 유지 / 추세 모드: 점수 비례로 가용 현금 비중 결정
+      let investAmount: number
+      if (isTrendMode) {
+        const scoreRatio =
+          target.score >= 90 ? 0.7 :
+          target.score >= 80 ? 0.5 :
+          target.score >= 70 ? 0.35 : 0.2
+        investAmount = Math.floor(freshCash * scoreRatio)
+        console.log(`[추세 ${logTime()}] ${target.name} 점수 ${target.score}점 → 가용 현금의 ${(scoreRatio * 100).toFixed(0)}% = ${investAmount.toLocaleString()}원 투자`)
+      } else {
+        const riskBudget = config.budget * 0.01
+        const atrAdjustedMax = target.atrPercent > 0
+          ? Math.min(effectiveMaxPerTrade, riskBudget / (target.atrPercent / 100))
+          : effectiveMaxPerTrade
+        investAmount = Math.min(atrAdjustedMax, freshCash * 0.5)
+      }
       const quantity = Math.floor(investAmount / target.price)
       if (quantity <= 0) {
         console.log(`[스캘핑 ${logTime()}] ${target.name} 수량 0 — 가격 ${target.price.toLocaleString()}원 > 투자금 ${investAmount.toLocaleString()}원 (ATR ${target.atrPercent.toFixed(1)}%)`)
@@ -936,6 +960,7 @@ const _executeScalpingCycleInner = async (
             priceTarget: target.priceTarget ?? Math.round(target.price * (1 + target.takeProfitPercent / 100)),
             runnerActive: false,
             runnerTrailStop: 0,
+            ma5: target.vwap > 0 ? target.vwap : 0, // 추세 모드: 매수 시 vwap을 임시 5일선 대용 (이후 갱신)
           }
         } else {
           failedCodes.add(target.code)
@@ -994,6 +1019,7 @@ const _executeScalpingCycleInner = async (
               priceTarget: target.priceTarget ?? prevMeta?.priceTarget ?? 0,
               runnerActive: prevMeta?.runnerActive ?? false,
               runnerTrailStop: prevMeta?.runnerTrailStop ?? 0,
+              ma5: prevMeta?.ma5 ?? 0,
             }
           }
         } else {
